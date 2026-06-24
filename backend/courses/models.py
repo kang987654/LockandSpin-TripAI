@@ -8,6 +8,8 @@ class TravelCourse(models.Model):
     destination = models.CharField(max_length=100)
     start_date = models.DateField()
     duration_days = models.IntegerField(default=1)
+    departure_time = models.TimeField(null=True, blank=True, help_text="여행 출발 시간 (예: 14:00)")
+    transportation = models.CharField(max_length=20, default='public', choices=[('car', '자차'), ('public', '대중교통')], help_text="이동 수단")
     preferences = models.TextField(blank=True, default='', help_text="자연어 여행 선호도 (AI 추천에 활용)")
     status = models.CharField(max_length=20, default='draft', choices=[('draft', '임시저장'), ('saved', '저장됨')], help_text="코스 저장 상태")
     ai_comment = models.TextField(blank=True, default='', help_text="AI가 분석한 코스 한줄평")

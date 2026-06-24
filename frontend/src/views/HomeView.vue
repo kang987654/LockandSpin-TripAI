@@ -1,10 +1,11 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useCourseStore } from '../stores/course'
-import { MapPin, Calendar, Sparkles } from 'lucide-vue-next'
+import { MapPin, Calendar, Sparkles, Clock, Car } from 'lucide-vue-next'
 import KoreaMapSelector from '../components/KoreaMapSelector.vue'
+import axios from 'axios'
 
 const authStore = useAuthStore()
 const courseStore = useCourseStore()
@@ -13,8 +14,32 @@ const router = useRouter()
 const destination = ref('')
 const courseTitle = ref('')
 const startDate = ref(new Date().toISOString().split('T')[0])
+const departureTime = ref('09:00')
+const transportation = ref('public')
 const durationDays = ref('2')
+const coursePurpose = ref('')
 const selectedThemes = ref([])
+const realtimeKeywords = ref([])
+let keywordTimeout = null
+
+watch(coursePurpose, (newVal) => {
+  clearTimeout(keywordTimeout)
+  if (!newVal.trim()) {
+    realtimeKeywords.value = []
+    return
+  }
+  keywordTimeout = setTimeout(async () => {
+    try {
+      const res = await axios.post(`${authStore.API_BASE}/api/courses/extract_keywords/`, { query: newVal })
+      realtimeKeywords.value = res.data.tags || []
+      if (res.data.title) {
+        courseTitle.value = res.data.title
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, 1000)
+})
 const isCreating = ref(false)
 
 const REGIONS = [
@@ -59,7 +84,9 @@ const handleGenerate = async () => {
       destination.value,
       Number(durationDays.value),
       startDate.value,
-      selectedThemes.value.join(',')
+      coursePurpose.value,
+      departureTime.value,
+      transportation.value
     )
     router.push(`/courses/${course.id}`)
   } catch (error) {
@@ -123,6 +150,26 @@ const handleGenerate = async () => {
                   <option value="5">4박 5일 이상</option>
                 </select>
               </div>
+
+              <div class="form-group" style="margin-top: 1.5rem;">
+                <label>출발 시간</label>
+                <div class="input-wrapper">
+                  <Clock :size="18" class="input-icon" />
+                  <input v-model="departureTime" type="time" required />
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top: 1.5rem;">
+                <label>이동 수단</label>
+                <div style="display: flex; gap: 1.5rem; margin-top: 0.5rem;">
+                  <label style="color: var(--text-muted); cursor: pointer;">
+                    <input type="radio" v-model="transportation" value="car" /> 자차
+                  </label>
+                  <label style="color: var(--text-muted); cursor: pointer;">
+                    <input type="radio" v-model="transportation" value="public" /> 대중교통/도보
+                  </label>
+                </div>
+              </div>
             </div>
 
             <!-- Right Column: Map Selector -->
@@ -134,19 +181,25 @@ const handleGenerate = async () => {
             </div>
           </div>
           
-          <!-- Row 3: 테마 -->
-          <div class="form-group" style="margin-top: 1rem;">
-            <label>어떤 테마의 여행을 원하시나요? (최대 3개)</label>
-            <div class="theme-pills">
+          <!-- Row 3: 목적 및 테마 -->
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <label>어떤 테마의 여행을 원하시나요? (목적을 자유롭게 적어주세요)</label>
+            <div class="input-wrapper" style="margin-top: 0.5rem;">
+              <Sparkles :size="18" class="input-icon" />
+              <input v-model="coursePurpose" type="text" placeholder="예: 비오는 날 제주도 실내 데이트 코스" />
+            </div>
+            
+            <!-- AI 동적 키워드 출력 -->
+            <div v-if="realtimeKeywords.length" class="theme-pills" style="margin-top: 1rem;">
               <button 
-                v-for="theme in THEMES" 
+                v-for="theme in realtimeKeywords" 
                 :key="theme"
                 type="button"
-                @click="toggleTheme(theme)"
-                :class="['theme-pill', { active: selectedThemes.includes(theme) }]"
+                class="theme-pill active"
               >
                 #{{ theme }}
               </button>
+              <span style="font-size: 0.8rem; color: var(--color-primary); align-self: center; margin-left: 0.5rem;">(AI 추천 키워드)</span>
             </div>
           </div>
           

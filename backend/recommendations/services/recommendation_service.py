@@ -108,7 +108,11 @@ def _temp_event_to_place(te, region: str):
         place = Place.objects.filter(name=f"[행사/전시] {te.name}").first()
 
     if not place:
-        lat, lon = _get_coordinates_for_address(te.address, region)
+        if te.latitude != 0.0 or te.longitude != 0.0:
+            lat, lon = te.latitude, te.longitude
+        else:
+            lat, lon = _get_coordinates_for_address(te.address, region)
+            
         place = Place.objects.create(
             name=f"[행사/전시] {te.name}",
             address=te.address or region,
@@ -124,7 +128,10 @@ def _temp_event_to_place(te, region: str):
     else:
         # 기존 좌표가 0.0인 데이터가 있다면 업데이트
         if place.latitude == 0.0 and place.longitude == 0.0:
-            lat, lon = _get_coordinates_for_address(te.address, region)
+            if te.latitude != 0.0 or te.longitude != 0.0:
+                lat, lon = te.latitude, te.longitude
+            else:
+                lat, lon = _get_coordinates_for_address(te.address, region)
             place.latitude = lat
             place.longitude = lon
             place.save()
@@ -132,7 +139,7 @@ def _temp_event_to_place(te, region: str):
     return place
 
 
-def get_slot_places_for_course(destination: str, travel_date: str, preferences: str, user) -> dict:
+def get_slot_places_for_course(destination: str, travel_date: str, preferences: str, user, duration_days: int = 1, departure_time: str = "09:00", transportation: str = "public") -> tuple:
     """
     Lock&Spin 코스 생성 시 AI 기반으로 슬롯에 채울 Place 객체들을 반환합니다.
 
@@ -143,6 +150,7 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
             'cafe': [Place, ...],
             'activity': [Place, ...],
         }
+        tuple: (slot_pool_dict, parsed_json_dict)
     """
     from places.models import Place
 
@@ -150,7 +158,14 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
     veto_codes = [v.category_code for v in user.veto_categories.all()]
 
     # 1. Gemini로 자연어 파싱
-    parsed = parse_user_request(destination, travel_date, preferences or f"{destination} 여행")
+    parsed = parse_user_request(
+        region=destination, 
+        travel_date=travel_date, 
+        query=preferences or f"{destination} 여행",
+        duration_days=duration_days,
+        departure_time=departure_time,
+        transportation=transportation
+    )
 
     slot_pool = {'spot': [], 'restaurant': [], 'cafe': [], 'activity': []}
 
@@ -242,13 +257,16 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
                 if p not in slot_pool[jw_cat]:
                     slot_pool[jw_cat].append(p)
 
-    return slot_pool
+    return slot_pool, parsed
 
 
-def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list):
-    """슬롯 순서에 맞는 카테고리에서 미사용 장소 1개를 선택합니다."""
-    category = SEQUENCE_TO_CATEGORY.get(sequence, '관광명소')
-    jw_category = KAKAO_TO_JW_CATEGORY.get(category, 'spot')
+def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_category: str = None):
+    """슬롯 순서 또는 target_category에 맞는 미사용 장소 1개를 선택합니다."""
+    if target_category:
+        jw_category = target_category
+    else:
+        category = SEQUENCE_TO_CATEGORY.get(sequence, '관광명소')
+        jw_category = KAKAO_TO_JW_CATEGORY.get(category, 'spot')
 
     candidates = [p for p in slot_pool.get(jw_category, []) if p.id not in used_ids]
 

@@ -34,13 +34,15 @@ export const useCourseStore = defineStore('course', () => {
     }
   }
 
-  const createCourse = async (title, destination, duration, travelDate, preferences) => {
+  const createCourse = async (title, destination, duration, travelDate, preferences, departureTime, transportation) => {
     try {
       const res = await axios.post(`${API_BASE}/api/courses/`, {
         title: title,
         destination: destination,
         duration_days: duration,
         start_date: travelDate || new Date().toISOString().split('T')[0],
+        departure_time: departureTime || '09:00',
+        transportation: transportation || 'public',
         preferences: preferences || ''
       }, authStore.getHeaders())
       activeCourse.value = res.data
@@ -101,7 +103,10 @@ export const useCourseStore = defineStore('course', () => {
   }
 
   const connectWebSocket = (courseId) => {
-    if (ws) ws.close()
+    if (ws) {
+      ws.onclose = null // Prevent old socket from triggering reconnect loop
+      ws.close()
+    }
     ws = new WebSocket(`${WS_BASE}/ws/courses/${courseId}/`)
 
     ws.onmessage = (event) => {

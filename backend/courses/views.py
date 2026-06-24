@@ -60,17 +60,60 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             from recommendations.services.recommendation_service import (
                 get_slot_places_for_course, pick_place_for_slot
             )
-            slot_pool = get_slot_places_for_course(
+            slot_pool, parsed = get_slot_places_for_course(
                 destination=course.destination,
                 travel_date=str(course.start_date),
                 preferences=course.preferences or f"{course.destination} 여행",
-                user=self.request.user if self.request.user.is_authenticated else None
+                user=self.request.user if self.request.user.is_authenticated else None,
+                duration_days=course.duration_days,
+                departure_time=course.departure_time.strftime('%H:%M') if course.departure_time else "09:00",
+                transportation=course.transportation
             )
 
             used_ids = []
+            
+            # 처리할 특정 장소들 (카카오 검색 후 풀에 추가)
+            specific_places = parsed.get('specific_places', [])
+            specific_place_objs = []
+            if specific_places:
+                from recommendations.services.kakao_service import fetch_and_save_kakao_places
+                from recommendations.services.recommendation_service import _fixed_place_to_place
+                for sp_name in specific_places:
+                    # 지역명 + 장소명으로 카카오 검색
+                    new_fps = fetch_and_save_kakao_places(course.destination, '관광명소', [sp_name])
+                    if new_fps:
+                        p = _fixed_place_to_place(new_fps[0], course.destination)
+                        specific_place_objs.append(p)
+
+            # daily_slots 활용
+            daily_slots = parsed.get('daily_slots', {})
+            
             for day in range(1, course.duration_days + 1):
-                for seq in range(1, 5):
-                    place = pick_place_for_slot(slot_pool, seq, used_ids)
+                day_str = str(day)
+                # AI가 daily_slots를 안 줬으면 기본 4개 슬롯으로 폴백
+                if day_str in daily_slots and isinstance(daily_slots[day_str], list):
+                    day_plan = daily_slots[day_str]
+                else:
+                    day_plan = ["관광명소", "음식점", "카페", "관광명소"]
+
+                for seq, category_name in enumerate(day_plan, start=1):
+                    # 카테고리에 맞는 영문 키 매핑
+                    jw_cat = 'spot'
+                    if '음식' in category_name or '식당' in category_name or '맛집' in category_name: jw_cat = 'restaurant'
+                    elif '카페' in category_name or '디저트' in category_name: jw_cat = 'cafe'
+                    elif '숙소' in category_name or '호텔' in category_name: jw_cat = 'activity'
+                    elif '액티비티' in category_name or '체험' in category_name: jw_cat = 'activity'
+
+                    place = None
+                    # 특정 장소가 남아있다면 우선 할당
+                    if specific_place_objs:
+                        place = specific_place_objs.pop(0)
+                        used_ids.append(place.id)
+                    else:
+                        place = pick_place_for_slot(slot_pool, seq, used_ids, target_category=jw_cat)
+                        if place:
+                            used_ids.append(place.id)
+                    
                     if place:
                         CourseDetail.objects.create(
                             course=course,
@@ -79,7 +122,6 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                             sequence=seq,
                             is_locked=False
                         )
-                        used_ids.append(place.id)
 
             # 생성 완료 후 AI 코멘트 작성
             from recommendations.services.ai_service import generate_course_comment
@@ -182,6 +224,16 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             course.ai_comment = generate_course_comment(course.destination, course.preferences, course_places)
             course.save()
 
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def extract_keywords(self, request):
+        """
+        사용자의 요구사항 텍스트에서 실시간으로 추천 해시태그용 키워드와 제목을 추출합니다.
+        """
+        query = request.data.get('query', '')
+        from recommendations.services.ai_service import extract_realtime_keywords
+        data = extract_realtime_keywords(query)
+        return Response(data)
 
     @action(detail=True, methods=['post'])
     def save_course(self, request, pk=None):
@@ -333,12 +385,23 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         dest_filter = None
         if course.destination != '랜덤':
             dest_filter = course.destination[:2]
-        else:
-            # 고정된 장소가 있다면 그 위치를 기반으로 인근 지역(시/도) 필터링
-            if locked_details.exists():
-                first_locked_addr = locked_details.first().place.address
-                if first_locked_addr:
-                    dest_filter = first_locked_addr[:2] # 예: '서울', '경기', '강원'
+        
+        # 추가: 현재 코스에 이미 배정된 장소들의 주소에서 '구/시/군' 단위의 지역을 추출하여 필터링 강화
+        current_places = CourseDetail.objects.filter(course=course).exclude(place__isnull=True)
+        if current_places.exists():
+            from collections import Counter
+            gu_list = []
+            for cp in current_places:
+                parts = cp.place.address.split()
+                if len(parts) >= 2:
+                    gu_list.append(parts[1])
+            if gu_list:
+                most_common_gu = Counter(gu_list).most_common(1)[0][0]
+                # dest_filter 가 있으면 결합, 없으면 구/군 단위만
+                if dest_filter:
+                    dest_filter = f"{dest_filter} {most_common_gu}"
+                else:
+                    dest_filter = most_common_gu
 
         # 5. 미잠금 슬롯 대상 재추천
         unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False)
@@ -375,8 +438,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                 jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티'}
                 kakao_cat = jw_to_kakao.get(categories[0], '관광명소')
                 
-                # course.destination이 '랜덤'이면 dest_filter를 사용
-                search_region = course.destination if course.destination != '랜덤' else dest_filter
+                # dest_filter (예: '서울 송파구')가 있으면 그것을 사용하여 카카오 검색 (더 구체적)
+                search_region = dest_filter if dest_filter else course.destination
                 
                 new_fps = fetch_and_save_kakao_places(search_region, kakao_cat, [])
                 for fp in new_fps:

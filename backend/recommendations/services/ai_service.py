@@ -12,32 +12,41 @@ from recommendations.models import AICache
 USER_REQUEST_PARSE_PROMPT = """
 당신은 사용자 여행 및 데이트 코스 추천 AI입니다.
 사용자의 여행 지역: "{region}"
-여행 날짜: "{travel_date}"
+여행 날짜: "{travel_date}" (총 {duration_days}일 일정)
+출발 시간: "{departure_time}"
+교통 수단: "{transportation}"
 사용자의 요구사항: "{query}"
 
-위 정보를 바탕으로 검색을 위한 카테고리와 태그를 추출하세요.
-특히 "실내데이트" 같은 추상적인 요구사항이 있다면, 이를 "실내", "데이트", "공방", "전시회", "카페" 등
-실제 장소 검색에 유리한 구체적 카테고리와 태그로 분해해 주세요.
+위 정보를 바탕으로 검색을 위한 카테고리와 태그를 추출하고, 여행 일자별(daily_slots)로 필요한 슬롯의 구조를 설계하세요.
 
-응답은 반드시 유효한 JSON 문자열이어야 하며, 마크다운(```json 등)을 포함하지 마세요.
+[지시사항]
+1. "실내데이트" 같은 추상적인 요구사항을 "실내", "데이트", "공방", "전시회", "카페" 등 실제 장소 검색에 유리한 구체적 카테고리와 태그로 분해해 주세요.
+2. 유저가 지목한 특정 장소 이름(예: 동문시장, 에코랜드 등)이나 **특정 동네/지역(예: 잠실, 홍대, 애월 등)**을 언급했다면 무조건 `specific_places` 배열에 **"잠실 만화카페", "잠실 식당"**처럼 [지역명+카테고리] 혹은 [지역명+장소명] 형태로 명시하여 검색이 그 동네로 한정되게 하세요.
+3. 여행 기간({duration_days}일)과 출발 시간({departure_time})을 고려하여 `daily_slots`를 동적으로 구성하세요. 
+   - 1박 이상의 일정이라면 아침식사나 숙소 슬롯을 포함하세요.
+   - 1일차 출발 시간이 오후(예: 14:00)라면 오전 일정은 빼고 점심/카페/저녁 등으로 알맞게 축소하세요.
+
+응답은 반드시 아래 형식의 유효한 JSON 문자열이어야 하며, 마크다운(```json 등)을 포함하지 마세요.
 
 {{
     "region": "{region}",
-    "travel_date": "{travel_date}",
+    "specific_places": ["동문시장"],
+    "daily_slots": {{
+        "1": ["카페", "관광명소", "음식점", "숙소"],
+        "2": ["음식점", "관광명소", "카페"]
+    }},
     "fixed_places": [
         {{"category": "카페", "tags": ["실내", "분위기있는"]}},
         {{"category": "음식점", "tags": ["데이트"]}},
-        {{"category": "관광명소", "tags": ["힐링"]}}
+        {{"category": "숙소", "tags": ["오션뷰"]}}
     ],
     "temporary_events": [
-        {{"category": "팝업스토어", "tags": ["실내"]}},
-        {{"category": "전시회", "tags": ["미술"]}}
+        {{"category": "팝업스토어", "tags": ["실내"]}}
     ]
 }}
 
-고정적 장소(음식점, 카페, 숙소, 공방, 액티비티, 관광명소, 수목원 등)는 fixed_places에,
-일시적 행사(팝업, 전시회, 행사, 공연, 축제 등)는 temporary_events에 분류하세요.
-요구사항에 부합하는 카테고리 종류를 유추해서 2~4개씩 배열에 담아주세요.
+고정적 장소(음식점, 카페, 숙소, 공방, 액티비티, 관광명소 등)는 fixed_places에,
+일시적 행사(팝업, 전시회, 공연, 축제 등)는 temporary_events에 분류하세요.
 """
 
 # 2. 생성된 코스 피드백 및 조언 작성 프롬프트
@@ -50,13 +59,24 @@ COURSE_REVIEW_SYSTEM_PROMPT = """
 테마/취향: {preferences}
 방문 장소들: {place_list_text}
 
-이 코스에 대해 다음 4가지 항목으로 나누어 실용적이고 구체적인 조언을 작성해 주세요.
-출력 형식은 마크다운 기호 없이, 줄바꿈과 텍스트로만 깔끔하게 작성해야 합니다.
+이 코스에 대해 아래의 3가지 항목으로 나누어 깔끔하게 추론하고 평가한 내용을 적어주세요.
+가독성을 위해 마크다운 헤더(###)와 글머리 기호(-)를 적절히 사용해 주세요.
 
-1. 코스 총평 및 문제점: (장점과 아쉬운 점, 동선 상의 문제점 등)
-2. 예상 예산: (식비, 입장료 등을 고려한 대략적인 비용)
-3. 교통편 및 이동 꿀팁: (대중교통, 렌터카 추천 및 이동 시 주의점)
-4. 여행지 꿀팁: (특정 장소의 추천 메뉴, 방문하기 좋은 시간대 등)
+**[매우 중요]**
+'안녕하세요', '대한민국 최고의 여행 플래너로서' 같은 불필요한 인사말이나 서론은 절대 쓰지 마세요.
+곧바로 `### 1. 전체적인 여행의 내용 및 평가` 부터 시작해야 합니다.
+
+### 1. 전체적인 여행의 내용 및 평가
+- 코스의 주된 테마와 일정의 흐름 요약
+- 이 코스만의 특별한 장점
+
+### 2. 전체적인 예산지출 예산안
+- 식비, 교통, 입장료 등을 고려한 대략적인 예상 비용
+- 예산을 아낄 수 있는 꿀팁
+
+### 3. 총 평가
+- 이 코스를 누구에게 추천하는지
+- 여행 시 주의할 점이나 마무리 코멘트
 """
 
 
@@ -89,7 +109,7 @@ def generate_course_comment(destination: str, preferences: str, places: list) ->
         return "멋진 장소들로 알차게 구성된 여행 코스입니다!"
 
 
-def parse_user_request(region: str, travel_date: str, query: str) -> dict:
+def parse_user_request(region: str, travel_date: str, query: str, duration_days: int = 1, departure_time: str = "09:00", transportation: str = "public") -> dict:
     """
     사용자의 요청을 Gemini API를 통해 분석하여 구조화된 데이터로 반환합니다.
     AICache를 활용하여 동일 쿼리 반복 호출을 방지합니다.
@@ -104,6 +124,9 @@ def parse_user_request(region: str, travel_date: str, query: str) -> dict:
     prompt = USER_REQUEST_PARSE_PROMPT.format(
         region=region,
         travel_date=travel_date,
+        duration_days=duration_days,
+        departure_time=departure_time,
+        transportation=transportation,
         query=query
     )
 
@@ -120,33 +143,76 @@ def parse_user_request(region: str, travel_date: str, query: str) -> dict:
         "generationConfig": {"temperature": 0.1}
     }
 
+    import time
+    for attempt in range(3):
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=15)
+            res.raise_for_status()
+            res_data = res.json()
+            raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:].strip()
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3].strip()
+            elif raw_text.startswith("```"):
+                raw_text = raw_text[3:].strip()
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3].strip()
+
+            data = json.loads(raw_text)
+
+            if "fixed_places" in data or "temporary_events" in data:
+                AICache.objects.get_or_create(query_key=cache_key, defaults={"parsed_result": data})
+
+            return data
+
+        except Exception as e:
+            print(f"Gemini API Error (Attempt {attempt+1}/3): {e}")
+            if attempt == 2:
+                return _fallback_parse(region, travel_date, query)
+            time.sleep(1)
+
+def extract_realtime_keywords(query: str) -> dict:
+    """
+    유저가 입력한 텍스트에서 실시간으로 추천 해시태그용 키워드와 어울리는 여행 제목을 추출합니다.
+    """
+    if not query.strip():
+        return {"title": "", "tags": []}
+        
+    prompt = f"""다음 사용자의 여행 요구사항을 바탕으로 센스있는 '여행 제목'과 핵심이 되는 '태그 3~5개'를 추출하세요.
+요구사항: {query}
+
+응답은 반드시 아래 형식의 유효한 JSON 문자열이어야 하며, 마크다운(```json 등)을 포함하지 마세요.
+{{
+    "title": "비오는 날 제주도 실내 데이트",
+    "tags": ["실내", "비오는날", "데이트", "맛집"]
+}}
+"""
+    
+    gms_key = os.getenv("GMS_API_KEY")
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4}
+    }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        res = requests.post(url, headers=headers, json=payload, timeout=5)
         res.raise_for_status()
-        res_data = res.json()
-
-        raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
+        raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # 마크다운 제거
         if raw_text.startswith("```json"):
-            raw_text = raw_text[7:].strip()
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3].strip()
-        elif raw_text.startswith("```"):
-            raw_text = raw_text[3:].strip()
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3].strip()
-
-        data = json.loads(raw_text)
-
-        if "fixed_places" in data or "temporary_events" in data:
-            AICache.objects.get_or_create(query_key=cache_key, defaults={"parsed_result": data})
-
+            raw_text = raw_text[7:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        
+        import json
+        data = json.loads(raw_text.strip())
         return data
-
     except Exception as e:
-        print(f"Gemini API Error: {e}")
-        return _fallback_parse(region, travel_date, query)
-
+        print(f"Realtime extraction error: {e}")
+        return {"title": "", "tags": []}
 
 def _fallback_parse(region: str, travel_date: str, query: str) -> dict:
     """Gemini API 실패 시 키워드 기반 폴백 파싱"""

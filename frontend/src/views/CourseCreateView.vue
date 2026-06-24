@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useCourseStore } from '../stores/course'
+import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,7 +14,31 @@ const newCourseTitle = ref('')
 const newCourseDestination = ref('')
 const newCourseDuration = ref(2)
 const newCourseDate = ref(new Date().toISOString().split('T')[0])
+const newCourseTime = ref('09:00')
+const newCourseTransport = ref('public')
 const newCoursePreferences = ref('')
+
+const realtimeKeywords = ref([])
+let keywordTimeout = null
+
+watch(newCoursePreferences, (newVal) => {
+  clearTimeout(keywordTimeout)
+  if (!newVal.trim()) {
+    realtimeKeywords.value = []
+    return
+  }
+  keywordTimeout = setTimeout(async () => {
+    try {
+      const res = await axios.post(`${authStore.API_BASE}/api/courses/extract_keywords/`, { query: newVal })
+      realtimeKeywords.value = res.data.tags || []
+      if (res.data.title) {
+        newCourseTitle.value = res.data.title
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, 1000)
+})
 
 onMounted(() => {
   if (route.query.dest) newCourseDestination.value = route.query.dest
@@ -36,7 +61,9 @@ const createCourse = async () => {
       newCourseDestination.value, 
       newCourseDuration.value,
       newCourseDate.value,
-      newCoursePreferences.value
+      newCoursePreferences.value,
+      newCourseTime.value,
+      newCourseTransport.value
     )
     router.push(`/courses/${course.id}`)
   } catch (e) {
@@ -56,15 +83,7 @@ const createCourse = async () => {
       <div class="glass-card">
         <h3 style="margin-bottom: 1rem; color: var(--text-bright);">🧬 내 취향 및 기피 태그 설정</h3>
         
-        <div style="margin-bottom: 1rem;">
-          <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem;">선호 테마</label>
-          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
-            <label v-for="theme in ['healing', 'nature', 'food', 'activity', 'culture', 'traditional']" :key="theme" class="theme-chip" :class="{active: authStore.preferredThemes.includes(theme)}">
-              <input type="checkbox" :value="theme" v-model="authStore.preferredThemes" style="display:none;" />
-              #{{ theme === 'healing' ? '힐링' : theme === 'nature' ? '자연' : theme === 'food' ? '맛집' : theme === 'activity' ? '액티비티' : theme === 'culture' ? '문화/역사' : '전통' }}
-            </label>
-          </div>
-        </div>
+        <!-- 동적 AI 테마 키워드로 인해 기존 고정 '선호 테마' 버튼은 삭제됨 -->
 
         <div style="margin-bottom: 1rem;">
           <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem;">선호 여행 페이스</label>
@@ -116,16 +135,38 @@ const createCourse = async () => {
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr; gap: 0.5rem; margin-bottom: 1.2rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1.2rem;">
           <div>
             <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">여행 시작 날짜</label>
             <input type="date" v-model="newCourseDate" class="form-input" style="height: 38px;" />
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">출발 시간</label>
+            <input type="time" v-model="newCourseTime" class="form-input" style="height: 38px;" />
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1.2rem;">
+          <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">이동 수단</label>
+          <div style="display: flex; gap: 1rem;">
+            <label style="color: var(--text-bright); font-size: 0.9rem;">
+              <input type="radio" v-model="newCourseTransport" value="car" /> 자차
+            </label>
+            <label style="color: var(--text-bright); font-size: 0.9rem;">
+              <input type="radio" v-model="newCourseTransport" value="public" /> 대중교통/도보
+            </label>
           </div>
         </div>
 
         <div style="margin-bottom: 1.2rem;">
           <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">어떤 여행을 원하시나요? (자유입력)</label>
-          <input type="text" v-model="newCoursePreferences" placeholder="예: 비 오는 날 실내 데이트, 조용한 카페 위주" class="form-input" />
+          <input type="text" v-model="newCoursePreferences" placeholder="예: 비 오는 날 실내 데이트, 동문시장 필수 방문" class="form-input" />
+          <div v-if="realtimeKeywords.length" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 24px;">
+            <span v-for="tag in realtimeKeywords" :key="tag" style="font-size: 0.75rem; color: var(--color-primary); background: hsla(265, 80%, 65%, 0.1); padding: 2px 8px; border-radius: 99px;">
+              #{{ tag }}
+            </span>
+            <span style="font-size: 0.75rem; color: #888; align-self: center; margin-left: 5px;">(AI 추천 키워드)</span>
+          </div>
         </div>
 
         <button class="btn-primary" style="width: 100%; justify-content: center; padding: 0.7rem;" @click="createCourse" :disabled="isCreating">

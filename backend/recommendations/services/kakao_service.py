@@ -8,13 +8,21 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
     카카오 로컬 API로 장소를 검색하고 FixedPlace DB에 저장/업데이트합니다.
     Kakao API 응답에서 x(경도)/y(위도) 좌표를 함께 저장합니다.
     """
-    kakao_key = os.getenv("KAKAO_REST_API_KEY")
+    kakao_key = os.getenv("KAKAO_REST_KEY")
     if not kakao_key:
         print("KAKAO_REST_API_KEY is not set")
         return []
 
     headers = {"Authorization": f"KakaoAK {kakao_key}"}
-    query = f"{region} {category}"
+    
+    query_parts = [region]
+    # '관광명소'라는 단어는 너무 포괄적이라 카카오 검색을 망칠 수 있음 (특히 특정 장소 검색 시)
+    if category and category != '관광명소':
+        query_parts.append(category)
+    if tags:
+        query_parts.extend(tags)
+        
+    query = " ".join(query_parts)
     url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}&size=10"
 
     try:

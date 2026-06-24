@@ -45,6 +45,8 @@ class TemporaryEvent(models.Model):
     category = models.CharField(max_length=100, db_index=True)
     start_date = models.DateField(db_index=True)
     end_date = models.DateField(db_index=True)
+    latitude = models.FloatField(default=0.0)
+    longitude = models.FloatField(default=0.0)
     image_url = models.URLField(max_length=1000, blank=True, null=True)
     link = models.URLField(max_length=1000)
     created_at = models.DateTimeField(auto_now_add=True)
