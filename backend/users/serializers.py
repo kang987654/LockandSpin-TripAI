@@ -25,12 +25,13 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 class UserPreferenceSerializer(serializers.ModelSerializer):
     preferred_themes = serializers.SerializerMethodField()
     veto_categories = serializers.SerializerMethodField()
+    id = serializers.IntegerField(source='user.id', read_only=True)
     username = serializers.CharField(source='user.username', read_only=True)
     email = serializers.CharField(source='user.email', read_only=True)
 
     class Meta:
         model = UserPreference
-        fields = ('username', 'email', 'preferred_themes', 'preferred_pace', 'veto_categories')
+        fields = ('id', 'username', 'email', 'preferred_themes', 'preferred_pace', 'veto_categories')
 
     def get_preferred_themes(self, obj):
         if not obj.preferred_themes:
@@ -41,3 +42,18 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
         # Retrieve veto categories from UserVetoCategory
         vetos = UserVetoCategory.objects.filter(user=obj.user)
         return [v.category_code for v in vetos]
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email')
+
+from users.models import Friendship
+
+class FriendshipSerializer(serializers.ModelSerializer):
+    from_user = UserSerializer(read_only=True)
+    to_user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Friendship
+        fields = ('id', 'from_user', 'to_user', 'status', 'created_at')

@@ -555,6 +555,17 @@ class CourseMemberViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             raise ValidationError({"email": "해당 이메일을 가진 사용자가 존재하지 않습니다."})
 
+        # 친구 관계 검증 (초대자와 피초대자가 친구여야 함)
+        from users.models import Friendship
+        from django.db.models import Q
+        is_friend = Friendship.objects.filter(
+            (Q(from_user=self.request.user, to_user=invitee) | Q(from_user=invitee, to_user=self.request.user))
+            & Q(status='accepted')
+        ).exists()
+
+        if not is_friend:
+            raise PermissionDenied("친구로 등록된 사용자만 코스에 초대할 수 있습니다.")
+
         # 중복 참여 체크
         if course.user == invitee or CourseMember.objects.filter(course=course, user=invitee).exists():
             raise ValidationError({"email": "이미 이 코스에 참여 중이거나 코스의 소유자입니다."})

@@ -19,7 +19,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from users.views import RegisterView, UserPreferenceView, ConfigView
+from users.views import RegisterView, UserPreferenceView, ConfigView, UserSearchView, FriendshipView, FriendRequestView, FriendAcceptView, FriendRejectView
 from courses.views import TravelCourseViewSet, CourseMemberViewSet
 
 router = DefaultRouter()
@@ -38,6 +38,13 @@ urlpatterns = [
     
     # Preferences
     path('api/user/preference/', UserPreferenceView.as_view(), name='user_preference'),
+    
+    # Friends & Search
+    path('api/users/search/', UserSearchView.as_view(), name='user_search'),
+    path('api/users/friends/', FriendshipView.as_view(), name='friends_list'),
+    path('api/users/friends/request/', FriendRequestView.as_view(), name='friends_request'),
+    path('api/users/friends/accept/', FriendAcceptView.as_view(), name='friends_accept'),
+    path('api/users/friends/reject/', FriendRejectView.as_view(), name='friends_reject'),
     
     # Courses (Router)
     path('api/', include(router.urls)),

@@ -1,14 +1,18 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useCourseStore } from '../stores/course'
 import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
 import PlaceDetailModal from '../components/PlaceDetailModal.vue'
+import FriendManagerModal from '../components/FriendManagerModal.vue'
 
 const route = useRoute()
+const router = useRouter()
 const courseStore = useCourseStore()
 const authStore = useAuthStore()
+
+const isFriendModalOpen = ref(false)
 
 const kakaoKey = ref('')
 const map = ref(null)
@@ -336,13 +340,30 @@ const getCompatibleSlots = (category) => {
         </div>
         <p class="text-muted" style="margin: 0;">목적지: {{ courseStore.activeCourse.destination }} | {{ courseStore.activeCourse.duration_days }}일간</p>
       </div>
-      <div style="display: flex; gap: 1rem;">
-        <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="courseStore.triggerRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">
-          <span style="font-size: 1.2rem;">🔄</span> {{ courseStore.isSpinning ? '슬롯 재조합 중...' : (courseStore.activeCourse.status === 'saved' ? '확정된 일정' : 'Re-spin!') }}
-        </button>
-        <button v-if="courseStore.activeCourse.status === 'draft' && (!courseStore.activeCourse.user || isCourseOwner)" class="btn-secondary" style="border-color: #10b981; color: #10b981; padding: 0.9rem 1.5rem; font-size: 1.05rem;" @click="saveCourse">
-          💾 일정 확정 및 저장하기
-        </button>
+      
+      <!-- Google Docs style Avatar Header -->
+      <div style="display: flex; align-items: center; gap: 1.5rem;">
+        <div class="collab-avatars" v-if="members.length > 0">
+          <div v-for="(member, idx) in members.slice(0, 5)" :key="member.user_id" class="avatar-circle" :style="{ zIndex: 10 - idx }" :title="member.username">
+            {{ member.username.charAt(0).toUpperCase() }}
+          </div>
+          <div v-if="members.length > 5" class="avatar-circle more-avatar">
+            +{{ members.length - 5 }}
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+          <button v-if="isCourseOwner || members.some(m => m.username === authStore.currentUser?.username && m.role === 'editor')" class="btn-primary" style="background: #007bff; border-color: #007bff; padding: 0.6rem 1.2rem; display: flex; align-items: center; gap: 0.4rem; border-radius: 20px; font-size: 0.95rem;" @click="isFriendModalOpen = true">
+            <span>👤+</span> 공유
+          </button>
+          
+          <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="courseStore.triggerRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">
+            <span style="font-size: 1.2rem;">🔄</span> {{ courseStore.isSpinning ? '슬롯 재조합 중...' : (courseStore.activeCourse.status === 'saved' ? '확정된 일정' : 'Re-spin!') }}
+          </button>
+          <button v-if="courseStore.activeCourse.status === 'draft' && (!courseStore.activeCourse.user || isCourseOwner)" class="btn-secondary" style="border-color: #10b981; color: #10b981; padding: 0.9rem 1.5rem; font-size: 1.05rem;" @click="saveCourse">
+            💾 일정 확정 및 저장하기
+          </button>
+        </div>
       </div>
     </div>
 
@@ -419,30 +440,6 @@ const getCompatibleSlots = (category) => {
               {{ isEvaluating ? '평가 중...' : '💡 다시 평가받기' }}
             </button>
           </div>
-
-          <!-- Social Spin Member Management Panel -->
-          <div style="background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); padding: 1.2rem; border-radius: 12px; border: 1px solid var(--border-muted); box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
-            <h3 style="color: var(--text-bright); font-size: 0.95rem; margin-bottom: 0.8rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
-              👥 소셜 스핀 멤버
-            </h3>
-            <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1rem;">
-              <div v-for="member in members" :key="member.user_id" style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border-muted);">
-                <div>
-                  <span style="color: var(--text-bright); font-weight: 700; font-size: 0.85rem;">{{ member.username }}</span>
-                  <span class="badge-role" :class="member.role" style="margin-left: 0.4rem; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 700;">
-                    {{ member.role === 'owner' ? '소유자' : '편집자' }}
-                  </span>
-                </div>
-                <button v-if="isCourseOwner && member.role !== 'owner'" @click="removeMember(member.user_id)" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.8rem; padding: 2px;" title="동행자 제외">❌</button>
-              </div>
-            </div>
-            <div v-if="isCourseOwner || members.some(m => m.username === authStore.currentUser?.username && m.role === 'editor')" style="display: flex; gap: 0.4rem;">
-              <input type="email" v-model="inviteEmail" placeholder="초대 이메일" @keyup.enter="inviteMember" style="flex: 1; padding: 6px 10px; background: #f8fafc; border: 1px solid var(--border-muted); border-radius: 6px; color: var(--text-bright); font-size: 0.8rem;" />
-              <button class="btn-keep" style="padding: 6px 10px;" @click="inviteMember" :disabled="isInviting || !inviteEmail">
-                {{ isInviting ? '...' : '초대' }}
-              </button>
-            </div>
-          </div>
         </div>
 
         <!-- Floating Panel: Bottom (Kept Places) -->
@@ -478,10 +475,50 @@ const getCompatibleSlots = (category) => {
     </div>
 
     <PlaceDetailModal :isOpen="isModalOpen" :place="selectedPlace" @close="isModalOpen = false" />
+    <FriendManagerModal :isOpen="isFriendModalOpen" @close="isFriendModalOpen = false" :showInvite="true" :courseId="courseStore.activeCourse.id" @invited="fetchMembers" />
   </div>
 </template>
 
 <style scoped>
+.collab-avatars {
+  display: flex;
+  align-items: center;
+}
+
+.avatar-circle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  border: 2px solid white;
+  margin-left: -10px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: relative;
+  transition: transform 0.2s;
+  cursor: default;
+}
+
+.avatar-circle:hover {
+  transform: translateY(-3px);
+  z-index: 20 !important;
+}
+
+.avatar-circle:first-child {
+  margin-left: 0;
+}
+
+.more-avatar {
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
 .planner-layout {
   display: flex;
   height: calc(100vh - 180px); /* 헤더 등을 제외한 나머지 높이 꽉 채우기 */
