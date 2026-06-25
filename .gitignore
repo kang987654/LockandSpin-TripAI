@@ -31,3 +31,13 @@ yarn-error.log*
 db.sqlite3
 generate_dummy_data*.py
 
+
+# Unnecessary files
+docs/
+scratch/
+dataset/
+*.pdf
+agents.md
+skills.md
+requirements.txt
+
