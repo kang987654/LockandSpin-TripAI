@@ -14,9 +14,12 @@ export const useAuthStore = defineStore('auth', () => {
   const vetoCategories = ref([])
   const currentUser = ref(null)
 
-  const getHeaders = () => ({
-    headers: { Authorization: `Bearer ${token.value}` }
-  })
+  const getHeaders = () => {
+    if (token.value) {
+      return { headers: { Authorization: `Bearer ${token.value}` } }
+    }
+    return {}
+  }
 
   const loginUser = async (username, password) => {
     isLoggingIn.value = true

@@ -280,3 +280,53 @@ def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_c
         
     used_ids.append(place.id)
     return place
+
+def calculate_place_score(place, context: dict) -> float:
+    """
+    단일 평가 엔진: 특정 장소의 점수를 계산합니다.
+    context = {
+        'ai_tags': ['가성비', '오션뷰'],
+        'user_themes': ['자연', '힐링'],
+        'reference_coords': [(lat, lon), (lat, lon)], # 확정된 장소들 좌표
+        'transportation': 'public' or 'car'
+    }
+    """
+    import math
+    import random
+    
+    score = 0.0
+    place_themes = [t.strip() for t in place.themes.split(',')] if place.themes else []
+    
+    # 1. AI 맥락(Tags) 매칭 (+8.0)
+    ai_tags = context.get('ai_tags', [])
+    for t in ai_tags:
+        if t in place_themes or t in place.name or t in place.category:
+            score += 8.0
+            
+    # 2. 유저 프로필 매칭 (+5.0)
+    user_themes = context.get('user_themes', [])
+    for t in user_themes:
+        if t in place_themes:
+            score += 5.0
+            
+    # 3. 트렌드 가점 (+2.0)
+    if '[행사/전시]' in place.name:
+        score += 2.0
+        
+    # 4. 거리 페널티
+    ref_coords = context.get('reference_coords', [])
+    transport = context.get('transportation', 'public')
+    if ref_coords and place.latitude != 0.0 and place.longitude != 0.0:
+        total_dist = 0
+        for lat, lon in ref_coords:
+            total_dist += haversine_local(place.latitude, place.longitude, lat, lon)
+        avg_dist = total_dist / len(ref_coords)
+        
+        # 패널티: 대중교통은 km당 -8점, 자차는 -1.5점
+        penalty_rate = 8.0 if transport == 'public' else 1.5
+        score -= (avg_dist * penalty_rate)
+        
+    # 5. 다양성 (Random Noise)
+    score += random.uniform(-3.0, 3.0)
+    
+    return score

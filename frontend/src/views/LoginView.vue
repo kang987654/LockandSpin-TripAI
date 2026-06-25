@@ -65,7 +65,7 @@ const handleLogin = async () => {
 
       <div style="text-align: center; font-size: 0.9rem; color: var(--text-muted);">
         아직 계정이 없으신가요? 
-        <router-link to="/register" style="color: var(--color-primary); text-decoration: none; font-weight: 600; margin-left: 0.4rem;">
+        <router-link :to="{ path: '/register', query: route.query }" style="color: var(--color-primary); text-decoration: none; font-weight: 600; margin-left: 0.4rem;">
           회원가입
         </router-link>
       </div>

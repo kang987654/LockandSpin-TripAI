@@ -30,7 +30,12 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
     카카오 로컬 API로 장소를 검색하고 FixedPlace DB에 저장/업데이트합니다.
     Kakao API 응답에서 x(경도)/y(위도) 좌표를 함께 저장합니다.
     """
-    kakao_key = os.getenv("KAKAO_REST_KEY")
+    kakao_key = os.getenv("KAKAO_REST_API_KEY")
+    if not kakao_key:
+        from django.conf import settings
+        if hasattr(settings, 'KAKAO_REST_API_KEY'):
+            kakao_key = settings.KAKAO_REST_API_KEY
+            
     if not kakao_key:
         print("KAKAO_REST_API_KEY is not set")
         return []

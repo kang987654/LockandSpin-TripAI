@@ -24,17 +24,11 @@ const router = createRouter({
       component: () => import('../views/CourseListView.vue'),
       meta: { requiresAuth: true }
     },
-    {
-      path: '/courses/create',
-      name: 'course-create',
-      component: () => import('../views/CourseCreateView.vue'),
-      meta: { requiresAuth: true }
-    },
+
     {
       path: '/courses/:id',
       name: 'course-detail',
-      component: CourseDetailView,
-      meta: { requiresAuth: true }
+      component: CourseDetailView
     },
     {
       path: '/community',
@@ -83,7 +77,7 @@ router.beforeEach(async (to, from, next) => {
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
 
   if (requiresAuth && !authStore.isLoggedIn) {
-    next('/login')
+    next({ path: '/login', query: { redirect: to.fullPath } })
   } else if ((to.name === 'login' || to.name === 'register') && authStore.isLoggedIn) {
     next('/')
   } else {

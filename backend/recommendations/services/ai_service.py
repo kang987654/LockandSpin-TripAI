@@ -57,11 +57,13 @@ USER_REQUEST_PARSE_PROMPT = """
 
 # Output Instruction
 1. 빡빡한 스케줄은 피하고, 스팟 간 충분한 여유 시간(Buffer)을 두세요. 
-2. 각 스팟마다 "왜 이 장소를 추천하는지" 1줄 이유를 포함하세요.
-3. 여행자가 변덕을 부릴 수 있도록, 일정 중 최소 1~2곳에는 대체 가능한 '옵션(Alternative)'을 짧게 제안하세요.
-4. [매우 중요] 각 일차별 `schedules` 배열의 길이는 반드시 'Core Logic 3'에 제시된 화살표(->) 단계 수에 맞춰 최소화하세요. (예: 1박 2일의 1일 차는 3~4개의 장소만 추천).
-5. [매우 중요] "도착", "주변 탐색", "귀가", "여유로운 브런치(장소 미정)" 처럼 구체적인 장소가 없는 단순 상태나 이동은 `schedules` 목록에 포함하지 마세요. 오직 실제 방문할 식당, 카페, 명소, 숙소만 배열에 넣으세요.
-6. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
+2. [매우 중요] 각 스팟마다 "왜 이 장소를 추천하는지" 1줄 이유를 포함하세요.
+3. [매우 중요] 각 스팟마다 구체적인 상호명(`location_name`)을 억지로 지어내지 마세요. 사용자가 프롬프트에서 특정 식당이나 명소를 콕 집어 언급했을 때만 기재하고, 그 외에는 무조건 빈 문자열("")로 두어 백엔드 자체 DB 검색을 유도하세요.
+4. [매우 중요] 대신, 해당 스팟에 어울리는 **감성 및 특성 태그(`tags`)**를 추상적인 키워드 2~3개(예: "힐링", "로맨틱", "실내", "가성비", "오션뷰", "사진찍기좋은곳")로 명확하게 뽑아주세요.
+5. 여행자가 변덕을 부릴 수 있도록, 일정 중 최소 1~2곳에는 대체 가능한 '옵션(Alternative)'을 짧게 제안하세요.
+6. [매우 중요] 각 일차별 `schedules` 배열의 길이는 반드시 'Core Logic 3'에 제시된 화살표(->) 단계 수에 맞춰 최소화하세요. (예: 1박 2일의 1일 차는 3~4개의 장소만 추천).
+7. [매우 중요] "도착", "주변 탐색", "귀가", "여유로운 브런치(장소 미정)" 처럼 구체적인 장소가 없는 단순 상태나 이동은 `schedules` 목록에 포함하지 마세요. 오직 실제 방문할 식당, 카페, 명소, 숙소만 배열에 넣으세요.
+8. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
 
 # JSON Output Format (Strict)
 ```json
@@ -80,7 +82,8 @@ USER_REQUEST_PARSE_PROMPT = """
         {{
           "time_slot": "오전/오후/저녁",
           "activity_type": "Spot / Meal / Cafe / Accommodation",
-          "location_name": "추천 장소 이름",
+          "tags": ["해당 스팟에 어울리는 감성/특성 태그 2~3개 (예: 힐링, 가성비, 오션뷰)"],
+          "location_name": "유저가 콕 집었을 때만 기재 (그 외엔 빈 문자열 '')",
           "reason": "이 장소를 추천하는 1줄 이유",
           "alternative_option": "기분에 따라 변경 가능한 대체 옵션 1개 (없으면 null)"
         }}
@@ -116,8 +119,8 @@ COURSE_REVIEW_SYSTEM_PROMPT = """
 - 식비, 교통, 입장료 등을 고려한 대략적인 예상 비용
 - 예산을 아낄 수 있는 꿀팁
 
-### 3. 총 평가
-- 이 코스를 누구에게 추천하는지
+### 3. 여행 팁 및 주의사항
+- 코스 진행 시 고려할 만한 현실적인 팁
 - 여행 시 주의할 점이나 마무리 코멘트
 """
 
@@ -155,7 +158,12 @@ def generate_course_comment(destination: str, preferences: str, places: list) ->
     )
 
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    if not gms_key:
+        from django.conf import settings
+        if hasattr(settings, 'GMS_API_KEY'):
+            gms_key = settings.GMS_API_KEY
+
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -194,7 +202,7 @@ def parse_user_request(region: str, travel_date: str, query: str, duration_days:
     )
 
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
 
     headers = {
         "Content-Type": "application/json",
@@ -254,7 +262,7 @@ def extract_realtime_keywords(query: str) -> dict:
 """
     
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -321,7 +329,7 @@ def recommend_food_menu(region: str, preference: str) -> dict:
     """사용자 기분/원하는 메뉴 기반으로 식당 1곳 추천"""
     prompt = FOOD_RECOMMENDATION_PROMPT.format(region=region, preference=preference)
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],

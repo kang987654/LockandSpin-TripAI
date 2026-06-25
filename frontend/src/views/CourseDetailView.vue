@@ -6,7 +6,12 @@ import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
 import PlaceDetailModal from '../components/PlaceDetailModal.vue'
 import FriendManagerModal from '../components/FriendManagerModal.vue'
+import { marked } from 'marked'
 
+const parsedAiComment = computed(() => {
+  if (!courseStore.activeCourse?.ai_comment) return ''
+  return marked(courseStore.activeCourse.ai_comment)
+})
 const route = useRoute()
 const router = useRouter()
 const courseStore = useCourseStore()
@@ -308,6 +313,17 @@ const isCourseOwner = computed(() => {
   return myMemberInfo && myMemberInfo.role === 'owner'
 })
 
+const hasEditPermission = computed(() => {
+  if (!authStore.currentUser) return false
+  if (!courseStore.activeCourse?.user) return true // 익명 코스는 누구나 편집 권한 가짐
+  const myMemberInfo = members.value.find(m => m.username === authStore.currentUser?.username)
+  return isCourseOwner.value || (myMemberInfo && myMemberInfo.role === 'editor')
+})
+
+const canEdit = computed(() => {
+  return courseStore.activeCourse?.status === 'draft' && hasEditPermission.value
+})
+
 // 마운트 시 멤버 로드 추가
 watch(() => courseStore.activeCourse, async (newVal) => {
   if (newVal && members.value.length === 0) {
@@ -461,13 +477,18 @@ const closeAiModal = () => {
           </div>
         </div>
 
-        <div style="display: flex; gap: 1rem;">
-          <button v-if="isCourseOwner || members.some(m => m.username === authStore.currentUser?.username && m.role === 'editor')" class="btn-primary" style="background: #007bff; border-color: #007bff; padding: 0.6rem 1.2rem; display: flex; align-items: center; gap: 0.4rem; border-radius: 20px; font-size: 0.95rem;" @click="isFriendModalOpen = true">
+        <div style="display: flex; gap: 1rem;" v-if="hasEditPermission">
+          <button class="btn-primary" style="background: #007bff; border-color: #007bff; padding: 0.6rem 1.2rem; display: flex; align-items: center; gap: 0.4rem; border-radius: 20px; font-size: 0.95rem;" @click="isFriendModalOpen = true">
             <span>👤+</span> 일행 초대
           </button>
           
-          <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="handleRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">
-            <span style="font-size: 1.2rem;">🔄</span> {{ respinText }}
+          <button class="btn-primary" 
+            :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" 
+            @click="handleRespin" 
+            :style="courseStore.activeCourse.status === 'saved' 
+              ? 'padding: 0.9rem 2.2rem; font-size: 1.05rem; background: #9ca3af; border-color: #9ca3af; color: #f3f4f6; opacity: 0.9; cursor: not-allowed; box-shadow: none;' 
+              : 'padding: 0.9rem 2.2rem; font-size: 1.05rem;'">
+            <span style="font-size: 1.2rem;">{{ courseStore.activeCourse.status === 'saved' ? '🔒' : '🔄' }}</span> {{ respinText }}
           </button>
           <button v-if="courseStore.activeCourse.status === 'draft' && (!courseStore.activeCourse.user || isCourseOwner)" class="btn-secondary" style="border-color: #10b981; color: #10b981; padding: 0.9rem 1.5rem; font-size: 1.05rem;" @click="saveCourse">
             💾 일정 확정 및 저장하기
@@ -490,7 +511,7 @@ const closeAiModal = () => {
         <div v-for="(slots, day) in slotsByDay" :key="day" style="margin-bottom: 2.5rem;">
           <h3 style="color: var(--color-primary); margin-bottom: 1.5rem; font-weight: 800; font-size: 1.4rem;">Day {{ day }}</h3>
           <div class="slot-board">
-            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item" draggable="true" @dragstart="onDragStart($event, slot)" @dragenter="onDragEnter" @dragleave="onDragLeave" @dragend="onDragEnd" @dragover="onDragOver" @drop="onDrop($event, slot)" style="cursor: grab; transition: transform 0.2s, background-color 0.2s;">
+            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item" :draggable="canEdit" @dragstart="onDragStart($event, slot)" @dragenter="onDragEnter" @dragleave="onDragLeave" @dragend="onDragEnd" @dragover="onDragOver" @drop="onDrop($event, slot)" :style="{ cursor: canEdit ? 'grab' : 'default', transition: 'transform 0.2s, background-color 0.2s' }">
               <!-- Timeline Dot -->
               <div class="timeline-dot">
                 <div class="timeline-dot-inner"></div>
@@ -499,7 +520,7 @@ const closeAiModal = () => {
               <!-- Slot Card -->
               <div class="slot-card-light" :class="{ locked: slot.is_locked, 'spinning-anim': courseStore.spinningSlots[`${slot.day_number}_${slot.sequence}`] }" :style="{ opacity: isExcluded(slot.place.id) ? 0.4 : 1, filter: isExcluded(slot.place.id) ? 'grayscale(100%)' : 'none' }" @click="openPlaceModal(slot.place)">
                 
-                <button v-if="courseStore.activeCourse.status === 'draft'" @click.stop="courseStore.deleteSlot(courseStore.activeCourse.id, slot.day_number, slot.sequence)" class="btn-delete-x" title="일정 삭제">✕</button>
+                <button v-if="canEdit" @click.stop="courseStore.deleteSlot(courseStore.activeCourse.id, slot.day_number, slot.sequence)" class="btn-delete-x" title="일정 삭제">✕</button>
                 
                 <div v-if="isExcluded(slot.place.id)" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: white; padding: 0.5rem 1rem; border-radius: 8px; font-weight: bold; font-size: 1.2rem; z-index: 10; pointer-events: none;">
                   🚫 제외됨
@@ -507,7 +528,7 @@ const closeAiModal = () => {
 
                 <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem;">
                   <span style="font-size: 0.8rem; font-weight: 800; color: var(--color-accent); text-transform: uppercase;">{{ slot.slot_name || getSeqLabel(slot.sequence) }}</span>
-                  <button class="btn-lock" :class="{ 'is-locked': slot.is_locked }" @click.stop="courseStore.toggleLock(slot)">
+                  <button v-if="canEdit" class="btn-lock" :class="{ 'is-locked': slot.is_locked }" @click.stop="courseStore.toggleLock(slot)">
                     {{ slot.is_locked ? '🔒 결정됨' : '🔓 이걸로 결정!' }}
                   </button>
                 </div>
@@ -531,15 +552,15 @@ const closeAiModal = () => {
 
                 <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-muted); padding-top: 0.8rem;">
                   <a v-if="slot.place.place_url" :href="slot.place.place_url" target="_blank" @click.stop style="font-size: 0.8rem; color: var(--text-muted); text-decoration: underline; margin-right: auto; padding-top: 6px;" :style="{ pointerEvents: isExcluded(slot.place.id) ? 'none' : 'auto' }">지도 보기 ↗</a>
-                  <button @click.stop="courseStore.excludePlace(courseStore.activeCourse.id, slot.place.id, slot.day_number, slot.sequence)" class="btn-exclude" :disabled="isExcluded(slot.place.id)">{{ isExcluded(slot.place.id) ? '🚫 제외됨' : '🚫 제외하기' }}</button>
-                  <button @click.stop="courseStore.keepPlace(courseStore.activeCourse.id, slot.place.id, slot.day_number, slot.sequence)" class="btn-keep" :disabled="isExcluded(slot.place.id)">📦 킵하기</button>
+                  <button v-if="canEdit" @click.stop="courseStore.excludePlace(courseStore.activeCourse.id, slot.place.id, slot.day_number, slot.sequence)" class="btn-exclude" :disabled="isExcluded(slot.place.id)">{{ isExcluded(slot.place.id) ? '🚫 제외됨' : '🚫 제외하기' }}</button>
+                  <button v-if="canEdit" @click.stop="courseStore.keepPlace(courseStore.activeCourse.id, slot.place.id, slot.day_number, slot.sequence)" class="btn-keep" :disabled="isExcluded(slot.place.id)">📦 킵하기</button>
                 </div>
 
               </div>
             </div>
           </div>
           
-          <div v-if="courseStore.activeCourse?.status === 'draft'" style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <div v-if="canEdit" style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
             <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'spot')" class="btn-add">명소 추가</button>
             <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'restaurant')" class="btn-add">식당 추가</button>
             <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'cafe')" class="btn-add">카페 추가</button>
@@ -581,8 +602,7 @@ const closeAiModal = () => {
               <button @click="closeAiModal" style="background: none; border: none; color: var(--text-muted); font-size: 1.8rem; cursor: pointer; line-height: 1;">×</button>
             </div>
             
-            <div style="color: var(--text-bright); font-size: 0.95rem; line-height: 1.7; white-space: pre-wrap; overflow-y: auto; overscroll-behavior: contain; padding-right: 0.5rem; flex: 1; min-height: 0;">
-              {{ courseStore.activeCourse.ai_comment }}
+            <div class="markdown-content" style="color: var(--text-bright); font-size: 0.95rem; line-height: 1.7; overflow-y: auto; overscroll-behavior: contain; padding-right: 0.5rem; flex: 1; min-height: 0;" v-html="parsedAiComment">
             </div>
 
             <div style="margin-top: 1rem; display: flex; justify-content: flex-end; border-top: 1px solid var(--border-muted); padding-top: 1rem; flex-shrink: 0;">
@@ -952,5 +972,33 @@ const closeAiModal = () => {
   border-top: 3px solid var(--color-primary);
   opacity: 0.8;
   transform: translateY(2px);
+}
+
+/* Markdown Styles */
+:deep(.markdown-content) {
+  font-family: inherit;
+}
+:deep(.markdown-content h1), 
+:deep(.markdown-content h2), 
+:deep(.markdown-content h3) {
+  color: var(--color-primary);
+  margin-top: 1.2rem;
+  margin-bottom: 0.6rem;
+  font-weight: 800;
+}
+:deep(.markdown-content p) {
+  margin-bottom: 0.8rem;
+}
+:deep(.markdown-content ul), 
+:deep(.markdown-content ol) {
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+:deep(.markdown-content li) {
+  margin-bottom: 0.4rem;
+}
+:deep(.markdown-content strong) {
+  color: #111827;
+  font-weight: 800;
 }
 </style>

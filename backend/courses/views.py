@@ -30,9 +30,7 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         if self.action in [
-            'retrieve', 'list_members', 'spin', 'keep_place', 
-            'exclude_place', 'remove_kept_place', 'swap_kept_place', 
-            'swap_slot_sequence', 'generate_ai_comment', 'claim', 'save_course'
+            'retrieve', 'list_members', 'claim'
         ]:
             return TravelCourse.objects.all()
             
@@ -159,13 +157,77 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                                     break
 
                     if not place:
-                        # Fallback to slot_pool if kakao fails or location_name is empty
-                        last_place = None
-                        if used_ids:
-                            from places.models import Place
-                            last_place = Place.objects.filter(id=used_ids[-1]).first()
-                        last_coords = (last_place.latitude, last_place.longitude) if last_place else None
-                        place = pick_place_for_slot(slot_pool, seq, used_ids, target_category=ai_cat, transportation=course.transportation, last_coords=last_coords)
+                        from places.models import Place
+                        from recommendations.services.recommendation_service import calculate_place_score
+                        
+                        qs = Place.objects.filter(category=ai_cat)
+                        if course.destination != '랜덤':
+                            dest_prefix = course.destination[:2]
+                            qs = qs.filter(address__contains=dest_prefix)
+                            
+                        if self.request.user and self.request.user.is_authenticated:
+                            veto_codes = [v.category_code for v in self.request.user.veto_categories.all()] if self.request.user and self.request.user.is_authenticated else []
+                            qs = qs.exclude(category__in=veto_codes)
+                            
+                        candidates = list(qs.exclude(id__in=used_ids))
+                        
+                        if candidates:
+                            ai_tags = schedule.get('tags', [])
+                            user_themes = []
+                            if self.request.user and self.request.user.is_authenticated:
+                                if hasattr(self.request.user, 'preference'):
+                                    import json
+                                    try:
+                                        user_themes = json.loads(self.request.user.preference.preferred_themes)
+                                    except:
+                                        pass
+                                        
+                            ref_coords = []
+                            for uid in used_ids:
+                                p = Place.objects.filter(id=uid).first()
+                                if p and p.latitude and p.longitude:
+                                    ref_coords.append((p.latitude, p.longitude))
+                                    
+                            # 첫 장소 앵커(Anchor) 문제 해결: 
+                            # used_ids가 없어 ref_coords가 비어있을 때, 세부 지역 키워드가 있다면 해당 지역을 중심 좌표로 강제 설정
+                            if not ref_coords and region_keyword and region_keyword != course.destination:
+                                from recommendations.services.kakao_service import fetch_and_save_kakao_places
+                                # 단순 지역명 검색으로 중심 좌표 가져오기
+                                kp = fetch_and_save_kakao_places(region_keyword, '', [])
+                                if kp:
+                                    try:
+                                        ref_coords.append((kp[0].latitude, kp[0].longitude))
+                                    except Exception:
+                                        pass
+
+                            context = {
+                                'ai_tags': ai_tags,
+                                'user_themes': user_themes,
+                                'reference_coords': ref_coords,
+                                'transportation': course.transportation
+                            }
+                            
+                            best_place = None
+                            best_score = -9999.0
+                            for cand in candidates:
+                                score = calculate_place_score(cand, context)
+                                if score > best_score:
+                                    best_score = score
+                                    best_place = cand
+                                    
+                            place = best_place
+                            
+                        # 만약 해당 지역에 DB 장소가 하나도 없다면 긴급 카카오 API 호출
+                        if not place:
+                            from recommendations.services.kakao_service import fetch_and_save_kakao_places
+                            from recommendations.services.recommendation_service import _fixed_place_to_place
+                            kakao_cat = {'spot':'관광명소','restaurant':'음식점','cafe':'카페','accommodation':'숙박'}.get(ai_cat, '액티비티')
+                            new_fps = fetch_and_save_kakao_places(course.destination, kakao_cat, [])
+                            for fp in new_fps:
+                                candidate = _fixed_place_to_place(fp, course.destination)
+                                if candidate.id not in used_ids:
+                                    place = candidate
+                                    break
                         
                     if place:
                         used_ids.append(place.id)
@@ -198,7 +260,7 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         """
         내부 DB의 Place를 랜덤으로 선택하는 기존 방식 (fallback)
         """
-        veto_codes = [v.category_code for v in self.request.user.veto_categories.all()]
+        veto_codes = [v.category_code for v in self.request.user.veto_categories.all()] if self.request.user and self.request.user.is_authenticated else []
 
         dest_filter = None
         if course.destination != '랜덤':
@@ -389,10 +451,13 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         sequence = request.data.get('sequence')
         detail = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=sequence).first()
         if detail and place_id:
+            old_place_id = detail.place_id
             detail.place_id = place_id
             detail.save()
             from courses.models import CoursePlaceKeep
             CoursePlaceKeep.objects.filter(course=course, place_id=place_id).delete()
+            if old_place_id:
+                CoursePlaceKeep.objects.get_or_create(course=course, place_id=old_place_id)
             
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
@@ -426,7 +491,12 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             moving_slot = slots.pop(from_idx)
             slots.insert(target_idx, moving_slot)
             
-            # 1부터 순서대로 sequence 재부여
+            # UNIQUE constraint 충돌 방지를 위해 임시로 큰 값을 부여
+            for s in slots:
+                s.sequence += 10000
+                s.save()
+                
+            # 1부터 순서대로 sequence 진짜 재부여
             for i, s in enumerate(slots, start=1):
                 s.sequence = i
                 s.save()
@@ -464,8 +534,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         if dest_filter:
             candidates = candidates.filter(address__contains=dest_filter)
             
-        fresh_candidates = candidates.exclude(id__in=current_place_ids)
-        if not fresh_candidates.exists() and dest_filter:
+        fresh_candidates = list(candidates.exclude(id__in=current_place_ids))
+        if not fresh_candidates and dest_filter:
             from recommendations.services.kakao_service import fetch_and_save_kakao_places
             from recommendations.services.recommendation_service import _fixed_place_to_place
             search_region = dest_filter if course.destination == '랜덤' else course.destination
@@ -473,15 +543,46 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             for fp in new_fps:
                 _fixed_place_to_place(fp, search_region)
             candidates = Place.objects.filter(category=jw_cat, address__contains=dest_filter).exclude(category__in=veto_codes)
-            fresh_candidates = candidates.exclude(id__in=current_place_ids)
+            fresh_candidates = list(candidates.exclude(id__in=current_place_ids))
             
-        if not fresh_candidates.exists():
-            fresh_candidates = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes).exclude(id__in=current_place_ids)
+        if not fresh_candidates:
+            fresh_candidates = list(Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes).exclude(id__in=current_place_ids))
             
         place = None
-        if fresh_candidates.exists():
-            import random
-            place = list(fresh_candidates.order_by('?')[:1])[0]
+        if fresh_candidates:
+            from recommendations.services.recommendation_service import calculate_place_score
+            
+            user_themes = []
+            if request.user and request.user.is_authenticated and hasattr(request.user, 'preference'):
+                import json
+                try:
+                    user_themes = json.loads(request.user.preference.preferred_themes)
+                except Exception:
+                    pass
+                    
+            day_details = CourseDetail.objects.filter(course=course, day_number=day_number).exclude(place__isnull=True)
+            ref_coords = [(d.place.latitude, d.place.longitude) for d in day_details if d.place.latitude and d.place.longitude]
+            
+            if not ref_coords:
+                all_details = CourseDetail.objects.filter(course=course).exclude(place__isnull=True)
+                ref_coords = [(d.place.latitude, d.place.longitude) for d in all_details if d.place.latitude and d.place.longitude]
+            
+            context = {
+                'ai_tags': [],
+                'user_themes': user_themes,
+                'reference_coords': ref_coords,
+                'transportation': course.transportation
+            }
+            
+            best_place = None
+            best_score = -9999.0
+            for cand in fresh_candidates:
+                score = calculate_place_score(cand, context)
+                if score > best_score:
+                    best_score = score
+                    best_place = cand
+                    
+            place = best_place
             
         if place:
             detail = CourseDetail.objects.create(
@@ -573,7 +674,7 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         locked_coords = [(ld.place.latitude, ld.place.longitude) for ld in locked_details]
 
         # 3. 비토(Veto) 목록 조회
-        veto_codes = [v.category_code for v in request.user.veto_categories.all()]
+        veto_codes = [v.category_code for v in request.user.veto_categories.all()] if request.user and request.user.is_authenticated else []
 
         # 4. 목적지 필터 설정
         primary_dest = None
@@ -704,42 +805,53 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             candidates = fresh_candidates
 
             # AI 기반 테마 매칭 및 거리 가중치 종합 계산
+            from recommendations.services.recommendation_service import calculate_place_score
             pref, created = UserPreference.objects.get_or_create(user=request.user)
             user_themes = [t.strip() for t in pref.preferred_themes.split(',') if t.strip()] if pref.preferred_themes else []
+
+            # AI 프롬프트 태그 복원
+            ai_tags = []
+            if course.preferences:
+                from recommendations.services.ai_service import parse_user_request
+                try:
+                    parsed = parse_user_request(
+                        region=course.destination,
+                        travel_date=str(course.start_date),
+                        query=course.preferences,
+                        duration_days=course.duration_days,
+                        departure_time=course.departure_time.strftime('%H:%M') if course.departure_time else "09:00",
+                        transportation=course.transportation
+                    )
+                    if parsed:
+                        for fp in parsed.get('fixed_places', []):
+                            ai_tags.extend(fp.get('tags', []))
+                except Exception:
+                    pass
 
             if candidates.exists():
                 best_place = None
                 max_score = -float('inf')
+                
+                context = {
+                    'ai_tags': ai_tags,
+                    'user_themes': user_themes,
+                    'reference_coords': locked_coords,
+                    'transportation': course.transportation
+                }
 
                 for cand in candidates:
-                    # 1. 테마 매칭 가중치 (개당 +5점)
-                    cand_themes = [t.strip() for t in cand.themes.split(',') if t.strip()] if cand.themes else []
-                    match_count = len(set(user_themes) & set(cand_themes))
-                    theme_score = match_count * 5.0
-
-                    # 전시회/팝업스토어는 우선순위 가중치 소폭 부여 (+2점)
-                    if '[행사/전시]' in cand.name:
-                        theme_score += 2.0
-
-                    # 2. 고정 장소들과의 물리적 거리 감점 (-1.5점 per km, 대중교통은 -8.0점)
-                    distance_penalty = 0.0
-                    penalty_rate = 8.0 if course.transportation == 'public' else 1.5
-                    
-                    if locked_coords:
-                        distances = [haversine(cand.latitude, cand.longitude, lat, lon) for lat, lon in locked_coords]
-                        avg_dist = sum(distances) / len(distances)
-                        distance_penalty = avg_dist * penalty_rate
-
-                    # 스핀을 여러 번 할 때 매번 똑같은 장소만 추천되는 것을 방지하기 위한 랜덤 노이즈 부여 (+- 3.0점)
-                    total_score = theme_score - distance_penalty + random.uniform(-3.0, 3.0)
-
-                    if total_score > max_score:
-                        max_score = total_score
+                    score = calculate_place_score(cand, context)
+                    if score > max_score:
+                        max_score = score
                         best_place = cand
 
                 if best_place:
                     detail.place = best_place
                     detail.save()
+                    
+                    # [버그 픽스] 방금 새로 추천된 장소의 좌표를 locked_coords에 추가!
+                    # 이렇게 해야 통째로 Respin을 돌려도 다음 장소가 방금 정한 장소 근처로 묶입니다.
+                    locked_coords.append((best_place.latitude, best_place.longitude))
                     
                     # 웹소켓 브로드캐스트 추가: 다른 사람 화면에도 실시간으로 스핀 결과를 쏴줍니다.
                     try:

@@ -1,10 +1,11 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { Dices, UserPlus } from 'lucide-vue-next'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const username = ref('')
@@ -26,7 +27,8 @@ const handleRegister = async () => {
   try {
     const success = await authStore.registerUser(username.value, email.value, password.value)
     if (success) {
-      router.push('/courses')
+      const redirect = route.query.redirect || '/courses'
+      router.push(redirect)
     }
   } catch (err) {
     const errData = err.response?.data
@@ -86,7 +88,7 @@ const handleRegister = async () => {
 
       <div style="text-align: center; font-size: 0.9rem; color: var(--text-muted);">
         이미 계정이 있으신가요? 
-        <router-link to="/login" style="color: var(--color-primary); text-decoration: none; font-weight: 600; margin-left: 0.4rem;">
+        <router-link :to="{ path: '/login', query: route.query }" style="color: var(--color-primary); text-decoration: none; font-weight: 600; margin-left: 0.4rem;">
           로그인
         </router-link>
       </div>
