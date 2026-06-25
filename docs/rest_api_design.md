@@ -21,6 +21,7 @@
 | | `POST` | `/api/courses/<course_id>/members/` | **[소셜 스핀]** 새로운 멤버 초대 (이메일 기반) |
 | | `DELETE` | `/api/courses/<course_id>/members/<user_id>/` | **[소셜 스핀]** 참여 멤버 추방 또는 내보내기 |
 | **추천 엔진** | `POST` | `/api/courses/<course_id>/spin/` | Lock 상태가 반영된 미잠금 슬롯 재추천 (Re-spin) |
+| **비회원 연동**| `POST` | `/api/courses/<course_id>/claim/` | 비회원 상태에서 생성한 코스를 로그인 후 본인 소유로 이전 |
 
 ---
 
@@ -199,6 +200,22 @@
     ]
   }
   ```
+
+---
+
+### 2.5. 비회원 코스 소유권 이전 (Claim) API (`POST /api/courses/<course_id>/claim/`)
+비회원(Anonymous) 상태에서 체험해 본 코스를, 회원가입/로그인 완료 후 자신의 소유(User ID 매핑)로 귀속시키는 데 사용됩니다.
+
+* **Header**: `Authorization: Bearer <token>`
+* **Response (200 OK)**:
+  ```json
+  {
+    "status": "success",
+    "message": "코스가 성공적으로 회원님 계정으로 이전되었습니다."
+  }
+  ```
+* **에러 응답**:
+  * 403 Forbidden: 이미 소유자가 있는 코스이거나 본인이 접근할 수 없는 경우.
 
 ---
 
