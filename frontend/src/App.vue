@@ -14,6 +14,12 @@ const handleLogout = () => {
   authStore.logout()
   router.push('/')
 }
+
+onMounted(() => {
+  if (authStore.isLoggedIn && !authStore.currentUser) {
+    authStore.fetchPreferences()
+  }
+})
 </script>
 
 <template>

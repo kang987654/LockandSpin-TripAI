@@ -32,7 +32,7 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         if self.action in [
             'retrieve', 'list_members', 'spin', 'keep_place', 
             'exclude_place', 'remove_kept_place', 'swap_kept_place', 
-            'generate_ai_comment', 'claim', 'save_course'
+            'swap_slot_sequence', 'generate_ai_comment', 'claim', 'save_course'
         ]:
             return TravelCourse.objects.all()
             
@@ -79,29 +79,36 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                 from recommendations.services.kakao_service import fetch_and_save_kakao_places
                 from recommendations.services.recommendation_service import _fixed_place_to_place
                 for sp_name in specific_places:
-                    # 지역명 + 장소명으로 카카오 검색
-                    new_fps = fetch_and_save_kakao_places(course.destination, '관광명소', [sp_name])
+                    # 카테고리 지정 없이 지역명 + 장소명으로 카카오 텍스트 검색 (모든 업종 검색)
+                    new_fps = fetch_and_save_kakao_places(course.destination, '', [sp_name])
                     if new_fps:
                         p = _fixed_place_to_place(new_fps[0], course.destination)
                         specific_place_objs.append(p)
 
-            # daily_slots 활용
-            daily_slots = parsed.get('daily_slots', {})
-            
             for day in range(1, course.duration_days + 1):
-                day_str = str(day)
-                # AI가 daily_slots를 안 줬으면 기본 4개 슬롯으로 폴백
-                if day_str in daily_slots and isinstance(daily_slots[day_str], list):
-                    day_plan = daily_slots[day_str]
+                is_last_day = (day == course.duration_days)
+                is_first_day = (day == 1)
+                
+                if is_last_day and course.duration_days > 1:
+                    day_plan = ["음식점", "관광명소", "음식점", "카페"]
                 else:
-                    day_plan = ["관광명소", "음식점", "카페", "관광명소"]
+                    effective_hour = course.departure_time.hour if (is_first_day and course.departure_time) else 9
+                    if effective_hour < 12:
+                        day_plan = ["관광명소", "음식점", "카페", "관광명소", "음식점"]
+                    elif effective_hour < 17:
+                        day_plan = ["음식점", "관광명소", "카페", "음식점"]
+                    else:
+                        day_plan = ["음식점", "관광명소"]
+                    
+                    if not is_last_day:
+                        day_plan.append("숙박")
 
                 for seq, category_name in enumerate(day_plan, start=1):
                     # 카테고리에 맞는 영문 키 매핑
                     jw_cat = 'spot'
                     if '음식' in category_name or '식당' in category_name or '맛집' in category_name: jw_cat = 'restaurant'
                     elif '카페' in category_name or '디저트' in category_name: jw_cat = 'cafe'
-                    elif '숙소' in category_name or '호텔' in category_name: jw_cat = 'activity'
+                    elif '숙소' in category_name or '호텔' in category_name or '숙박' in category_name: jw_cat = 'accommodation'
                     elif '액티비티' in category_name or '체험' in category_name: jw_cat = 'activity'
 
                     place = None
@@ -110,7 +117,56 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                         place = specific_place_objs.pop(0)
                         used_ids.append(place.id)
                     else:
-                        place = pick_place_for_slot(slot_pool, seq, used_ids, target_category=jw_cat)
+                        # 이미 할당된 장소들의 지역구(Gu)를 분석하여 해당 지역구 위주로 필터링
+                        current_places = [c.place for c in CourseDetail.objects.filter(course=course)]
+                        preferred_gu = None
+                        if current_places:
+                            from collections import Counter
+                            gu_list = []
+                            for cp in current_places:
+                                parts = cp.address.split()
+                                if len(parts) >= 2:
+                                    gu_list.append(parts[1])
+                            if gu_list:
+                                preferred_gu = Counter(gu_list).most_common(1)[0][0]
+                        
+                        # slot_pool을 preferred_gu로 필터링한 임시 풀 생성
+                        local_slot_pool = {}
+                        for k, v in slot_pool.items():
+                            if preferred_gu:
+                                local_v = [p for p in v if preferred_gu in p.address]
+                                if not local_v: # 부족하면 원본 풀 사용
+                                    local_v = v
+                                local_slot_pool[k] = local_v
+                            else:
+                                local_slot_pool[k] = v
+
+                        last_place = None
+                        if used_ids:
+                            from places.models import Place
+                            last_place = Place.objects.filter(id=used_ids[-1]).first()
+                            
+                        last_coords = (last_place.latitude, last_place.longitude) if last_place else None
+                        
+                        place = pick_place_for_slot(local_slot_pool, seq, used_ids, target_category=jw_cat, transportation=course.transportation, last_coords=last_coords)
+                        
+                        if not place and preferred_gu:
+                            # 그래도 없으면 카카오 API로 해당 지역 장소 긴급 보충
+                            from recommendations.services.kakao_service import fetch_and_save_kakao_places
+                            from recommendations.services.recommendation_service import _fixed_place_to_place
+                            jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티', 'accommodation': '숙박'}
+                            kakao_cat = jw_to_kakao.get(jw_cat, '관광명소')
+                            search_region = f"{course.destination} {preferred_gu}"
+                            
+                            new_fps = fetch_and_save_kakao_places(search_region, kakao_cat, [])
+                            if new_fps:
+                                for fp in new_fps:
+                                    _fixed_place_to_place(fp, search_region)
+                                from places.models import Place
+                                qs = Place.objects.filter(category=jw_cat, address__contains=search_region).exclude(id__in=used_ids)
+                                if qs.exists():
+                                    place = list(qs.order_by('?')[:1])[0]
+
                         if place:
                             used_ids.append(place.id)
                     
@@ -120,6 +176,7 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                             place=place,
                             day_number=day,
                             sequence=seq,
+                            slot_name=category_name,
                             is_locked=False
                         )
 
@@ -339,6 +396,126 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(course)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['post'])
+    def swap_slot_sequence(self, request, pk=None):
+        course = self.get_object()
+        day_number = request.data.get('day_number')
+        seq1 = request.data.get('seq1')
+        seq2 = request.data.get('seq2')
+
+        detail1 = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=seq1).first()
+        detail2 = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=seq2).first()
+
+        if detail1 and detail2:
+            detail1.sequence = 9999
+            detail1.save()
+
+            detail2.sequence = seq1
+            detail2.save()
+
+            detail1.sequence = seq2
+            detail1.save()
+
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"course_{course.id}",
+                    {'type': 'course_update_message', 'event': 'course_changed', 'data': {}}
+                )
+        serializer = self.get_serializer(course)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def add_slot(self, request, pk=None):
+        course = self.get_object()
+        day_number = request.data.get('day_number')
+        jw_cat = request.data.get('category')
+        
+        from django.db.models import Max
+        max_seq = CourseDetail.objects.filter(course=course, day_number=day_number).aggregate(Max('sequence'))['sequence__max'] or 0
+        new_seq = max_seq + 1
+        
+        jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티', 'accommodation': '숙박'}
+        category_name = jw_to_kakao.get(jw_cat, '관광명소')
+        
+        veto_codes = [v.category_code for v in request.user.veto_categories.all()] if (request.user and request.user.is_authenticated) else []
+        candidates = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes)
+        
+        dest_filter = course.destination[:2] if course.destination != '랜덤' else None
+        current_place_ids = [c.place_id for c in CourseDetail.objects.filter(course=course)]
+        
+        if dest_filter:
+            candidates = candidates.filter(address__contains=dest_filter)
+            
+        fresh_candidates = candidates.exclude(id__in=current_place_ids)
+        if not fresh_candidates.exists() and dest_filter:
+            from recommendations.services.kakao_service import fetch_and_save_kakao_places
+            from recommendations.services.recommendation_service import _fixed_place_to_place
+            search_region = dest_filter if course.destination == '랜덤' else course.destination
+            new_fps = fetch_and_save_kakao_places(search_region, category_name, [])
+            for fp in new_fps:
+                _fixed_place_to_place(fp, search_region)
+            candidates = Place.objects.filter(category=jw_cat, address__contains=dest_filter).exclude(category__in=veto_codes)
+            fresh_candidates = candidates.exclude(id__in=current_place_ids)
+            
+        if not fresh_candidates.exists():
+            fresh_candidates = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes).exclude(id__in=current_place_ids)
+            
+        place = None
+        if fresh_candidates.exists():
+            import random
+            place = list(fresh_candidates.order_by('?')[:1])[0]
+            
+        if place:
+            detail = CourseDetail.objects.create(
+                course=course,
+                place=place,
+                day_number=day_number,
+                sequence=new_seq,
+                slot_name=category_name,
+                is_locked=False
+            )
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"course_{course.id}",
+                    {'type': 'course_update_message', 'event': 'course_changed', 'data': {}}
+                )
+            
+        serializer = self.get_serializer(course)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def delete_slot(self, request, pk=None):
+        course = self.get_object()
+        day_number = request.data.get('day_number')
+        sequence = request.data.get('sequence')
+        
+        detail = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=sequence).first()
+        if detail:
+            detail.delete()
+            remaining = CourseDetail.objects.filter(course=course, day_number=day_number).order_by('sequence')
+            for idx, r in enumerate(remaining, start=1):
+                if r.sequence != idx:
+                    r.sequence = idx
+                    r.save()
+                    
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"course_{course.id}",
+                    {'type': 'course_update_message', 'event': 'course_changed', 'data': {}}
+                )
+                
+        serializer = self.get_serializer(course)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def claim(self, request, pk=None):
         course = self.get_object()
@@ -358,6 +535,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         """
         # get_object_or_404를 django.shortcuts에서 임포트한 함수로 바로 사용하도록 수정 (AttributeError 해결)
         course = get_object_or_404(self.get_queryset(), pk=pk)
+        
+        target_day = request.data.get('target_day')
         
         # 1. 전달받은 슬롯 정보 파싱 및 잠금 상태 갱신
         slots_data = request.data.get('slots', [])
@@ -381,12 +560,12 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         # 3. 비토(Veto) 목록 조회
         veto_codes = [v.category_code for v in request.user.veto_categories.all()]
 
-        # 4. 목적지 필터 설정 (랜덤인 경우 고정된 장소의 지역으로 자동 고정)
-        dest_filter = None
+        # 4. 목적지 필터 설정
+        primary_dest = None
         if course.destination != '랜덤':
-            dest_filter = course.destination[:2]
+            primary_dest = course.destination[:2]
         
-        # 추가: 현재 코스에 이미 배정된 장소들의 주소에서 '구/시/군' 단위의 지역을 추출하여 필터링 강화
+        most_common_gu = None
         current_places = CourseDetail.objects.filter(course=course).exclude(place__isnull=True)
         if current_places.exists():
             from collections import Counter
@@ -397,30 +576,33 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                     gu_list.append(parts[1])
             if gu_list:
                 most_common_gu = Counter(gu_list).most_common(1)[0][0]
-                # dest_filter 가 있으면 결합, 없으면 구/군 단위만
-                if dest_filter:
-                    dest_filter = f"{dest_filter} {most_common_gu}"
-                else:
-                    dest_filter = most_common_gu
 
         # 5. 미잠금 슬롯 대상 재추천
-        unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False)
+        if target_day:
+            unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False, day_number=target_day)
+        else:
+            unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False)
+            
         for detail in unlocked_details:
-            if detail.sequence == 1:
-                categories = ['spot', 'activity']
-            elif detail.sequence == 2:
-                categories = ['restaurant']
-            elif detail.sequence == 3:
-                categories = ['cafe']
-            else:
-                categories = ['restaurant']
+            jw_cat = 'spot'
+            if '음식' in detail.slot_name or '식당' in detail.slot_name or '맛집' in detail.slot_name: jw_cat = 'restaurant'
+            elif '카페' in detail.slot_name or '디저트' in detail.slot_name: jw_cat = 'cafe'
+            elif '숙소' in detail.slot_name or '호텔' in detail.slot_name or '숙박' in detail.slot_name: jw_cat = 'accommodation'
+            elif '액티비티' in detail.slot_name or '체험' in detail.slot_name: jw_cat = 'activity'
+            
+            categories = [jw_cat]
 
             # 기본 카테고리 후보 필터링 (비토 제외)
             candidates = Place.objects.filter(category__in=categories).exclude(category__in=veto_codes)
             
             # 지역 목적지 필터 적용 (전국 대상 스핀 방지)
-            if dest_filter:
-                candidates = candidates.filter(address__contains=dest_filter)
+            if primary_dest:
+                candidates = candidates.filter(address__contains=primary_dest)
+            
+            if most_common_gu:
+                gu_candidates = candidates.filter(address__contains=most_common_gu)
+                if gu_candidates.exists():
+                    candidates = gu_candidates
             
             # 기존 장소 목록 수집
             current_place_ids = [c.place_id for c in CourseDetail.objects.filter(course=course)]
@@ -429,17 +611,16 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             exclude_all = set(current_place_ids + excluded_ids)
             fresh_candidates = candidates.exclude(id__in=exclude_all)
             
-            if not fresh_candidates.exists() and dest_filter:
+            if not fresh_candidates.exists() and primary_dest:
                 # DB에 해당 지역 장소가 부족할 경우 카카오 API로 긴급 수집
                 from recommendations.services.kakao_service import fetch_and_save_kakao_places
                 from recommendations.services.recommendation_service import _fixed_place_to_place
                 
                 # 역방향 매핑 (spot -> 관광명소)
-                jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티'}
+                jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티', 'accommodation': '숙박'}
                 kakao_cat = jw_to_kakao.get(categories[0], '관광명소')
                 
-                # dest_filter (예: '서울 송파구')가 있으면 그것을 사용하여 카카오 검색 (더 구체적)
-                search_region = dest_filter if dest_filter else course.destination
+                search_region = f"{primary_dest} {most_common_gu}" if (primary_dest and most_common_gu) else (primary_dest or course.destination)
                 
                 new_fps = fetch_and_save_kakao_places(search_region, kakao_cat, [])
                 for fp in new_fps:
@@ -463,7 +644,11 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                             _temp_event_to_place(te, search_region)
                 
                 # 다시 후보 검색
-                candidates = Place.objects.filter(category__in=categories, address__contains=dest_filter).exclude(category__in=veto_codes)
+                candidates = Place.objects.filter(category__in=categories, address__contains=primary_dest).exclude(category__in=veto_codes)
+                if most_common_gu:
+                    gu_candidates = candidates.filter(address__contains=most_common_gu)
+                    if gu_candidates.exists():
+                        candidates = gu_candidates
                 fresh_candidates = candidates.exclude(id__in=exclude_all)
 
             if not fresh_candidates.exists():
@@ -490,12 +675,14 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                     if '[행사/전시]' in cand.name:
                         theme_score += 2.0
 
-                    # 2. 고정 장소들과의 물리적 거리 감점 (-1.5점 per km)
+                    # 2. 고정 장소들과의 물리적 거리 감점 (-1.5점 per km, 대중교통은 -8.0점)
                     distance_penalty = 0.0
+                    penalty_rate = 8.0 if course.transportation == 'public' else 1.5
+                    
                     if locked_coords:
                         distances = [haversine(cand.latitude, cand.longitude, lat, lon) for lat, lon in locked_coords]
                         avg_dist = sum(distances) / len(distances)
-                        distance_penalty = avg_dist * 1.5
+                        distance_penalty = avg_dist * penalty_rate
 
                     # 스핀을 여러 번 할 때 매번 똑같은 장소만 추천되는 것을 방지하기 위한 랜덤 노이즈 부여 (+- 3.0점)
                     total_score = theme_score - distance_penalty + random.uniform(-3.0, 3.0)

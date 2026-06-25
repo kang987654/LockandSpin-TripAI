@@ -63,11 +63,57 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
             )
             _update_tags(place, tags)
             saved_places.append(place)
+            try:
+                _append_to_unified_dataset(doc)
+            except Exception as e:
+                print(f"Error appending to unified_dataset: {e}")
         except Exception as e:
             print(f"Error saving FixedPlace {place_id}: {e}")
             continue
 
     return saved_places
+
+def _append_to_unified_dataset(doc):
+    import json, os
+    from django.conf import settings
+    
+    file_path = os.path.join(settings.BASE_DIR.parent, 'data', 'unified_dataset.json')
+    if not os.path.exists(file_path):
+        return
+        
+    new_item = {
+        "id": doc["id"],
+        "source": "kakao",
+        "title": doc["place_name"],
+        "category": doc.get("category_name", ""),
+        "address": doc["address_name"],
+        "telephone": doc.get("phone", ""),
+        "location": {
+            "lat": doc.get("y", "0"),
+            "lng": doc.get("x", "0")
+        },
+        "url": doc.get("place_url", ""),
+        "original_data": {
+            "original_title": doc["place_name"],
+            "original_source": "user_search"
+        },
+        "image_url": ""
+    }
+    
+    with open(file_path, 'rb+') as f:
+        # 끝에서 100바이트 정도만 읽어서 마지막 ']'를 찾습니다. O(1) 시간 복잡도.
+        f.seek(0, os.SEEK_END)
+        file_size = f.tell()
+        chunk_size = min(file_size, 100)
+        f.seek(-chunk_size, os.SEEK_END)
+        tail = f.read()
+        
+        idx = tail.rfind(b']')
+        if idx != -1:
+            f.seek(-chunk_size + idx, os.SEEK_END)
+            new_data_str = ",\n  " + json.dumps(new_item, ensure_ascii=False) + "\n]"
+            f.write(new_data_str.encode('utf-8'))
+
 
 
 def _update_tags(place: FixedPlace, tags_list: list):

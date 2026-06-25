@@ -11,9 +11,10 @@ KAKAO_TO_JW_CATEGORY = {
     '관광명소': 'spot',
     '공방': 'activity',
     '액티비티': 'activity',
-    '숙소': 'activity',
-    '펜션': 'activity',
-    '호텔': 'activity',
+    '숙박': 'accommodation',
+    '숙소': 'accommodation',
+    '펜션': 'accommodation',
+    '호텔': 'accommodation',
 }
 
 # Lock&Spin 슬롯 순서 → 기본 카카오 카테고리 매핑
@@ -167,7 +168,7 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
         transportation=transportation
     )
 
-    slot_pool = {'spot': [], 'restaurant': [], 'cafe': [], 'activity': []}
+    slot_pool = {'spot': [], 'restaurant': [], 'cafe': [], 'activity': [], 'accommodation': []}
 
     # 2. 고정 장소 처리 (트랙 A - 카카오 API)
     for fp_info in parsed.get('fixed_places', []):
@@ -260,7 +261,16 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
     return slot_pool, parsed
 
 
-def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_category: str = None):
+def haversine_local(lat1, lon1, lat2, lon2):
+    import math
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_category: str = None, transportation: str = 'public', last_coords: tuple = None):
     """슬롯 순서 또는 target_category에 맞는 미사용 장소 1개를 선택합니다."""
     if target_category:
         jw_category = target_category
@@ -268,27 +278,37 @@ def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_c
         category = SEQUENCE_TO_CATEGORY.get(sequence, '관광명소')
         jw_category = KAKAO_TO_JW_CATEGORY.get(category, 'spot')
 
-    candidates = [p for p in slot_pool.get(jw_category, []) if p.id not in used_ids]
+    candidates = [p for p in slot_pool.get(jw_category, []) if p.id not in used_ids and p.category == jw_category]
 
     if not candidates:
+        if target_category:
+            # 타겟 카테고리가 지정되었는데 후보가 없다면 None을 반환하여 외부(views.py)의 카카오 API 긴급 보충(Fallback) 로직이 작동하게 함
+            return None
+            
         # 전체 풀에서 미사용 장소 선택
         all_places = []
         for places in slot_pool.values():
             all_places.extend(places)
-        candidates = [p for p in all_places if p.id not in used_ids]
+        candidates = [p for p in all_places if p.id not in used_ids and p.category == jw_category]
 
     if not candidates:
         return None
         
-    exhibition_candidates = [p for p in candidates if '[행사/전시]' in p.name]
-    if exhibition_candidates and random.random() < 0.2:  # 20% 확률로 배정
-        place = random.choice(exhibition_candidates)
+    if last_coords and transportation == 'public' and not target_category:
+        # 대중교통일 경우 이전 장소와 가장 가까운 곳 위주로 추천
+        candidates.sort(key=lambda p: haversine_local(p.latitude, p.longitude, last_coords[0], last_coords[1]))
+        top_n = candidates[:3]
+        place = random.choice(top_n)
     else:
-        fresh_candidates = [p for p in candidates if '[행사/전시]' not in p.name]
-        if not fresh_candidates:
-            place = random.choice(candidates)
+        exhibition_candidates = [p for p in candidates if '[행사/전시]' in p.name]
+        if exhibition_candidates and random.random() < 0.2:  # 20% 확률로 배정
+            place = random.choice(exhibition_candidates)
         else:
-            place = random.choice(fresh_candidates)
+            fresh_candidates = [p for p in candidates if '[행사/전시]' not in p.name]
+            if not fresh_candidates:
+                place = random.choice(candidates)
+            else:
+                place = random.choice(fresh_candidates)
         
     used_ids.append(place.id)
     return place

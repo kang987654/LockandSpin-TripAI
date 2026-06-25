@@ -92,11 +92,11 @@ onMounted(async () => {
 
         <!-- Veto Chips -->
         <div style="margin-bottom: 2rem;">
-          <label style="display: block; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.6rem; font-weight: 600;">기피 카테고리 (추천 제외)</label>
+          <label style="display: block; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.6rem; font-weight: 600;">🚫 카테고리 제외 (해당 장소 비추천)</label>
           <div style="display: flex; flex-wrap: wrap; gap: 0.6rem;">
-            <label v-for="cat in ['restaurant', 'cafe', 'spot', 'activity']" :key="cat" class="veto-chip" :class="{active: authStore.vetoCategories.includes(cat)}">
+            <label v-for="cat in ['restaurant', 'cafe', 'spot', 'activity', 'accommodation']" :key="cat" class="veto-chip" :class="{active: authStore.vetoCategories.includes(cat)}">
               <input type="checkbox" :value="cat" v-model="authStore.vetoCategories" style="display:none;" />
-              {{ cat === 'spot' ? '관광지' : cat === 'restaurant' ? '음식점' : cat === 'cafe' ? '카페' : '액티비티' }} 제외
+              {{ cat === 'spot' ? '명소' : cat === 'restaurant' ? '식당' : cat === 'cafe' ? '카페' : cat === 'accommodation' ? '숙박/숙소' : '액티비티' }} 🚫
             </label>
           </div>
           <p style="font-size: 0.75rem; color: hsl(0, 80%, 65%); margin-top: 0.4rem;">선택한 종류의 장소는 일정 추천 및 Re-spin 후보지에서 원천 배제됩니다.</p>

@@ -1,5 +1,6 @@
 <template>
-  <div v-if="isOpen" class="modal-backdrop" @click.self="close">
+  <Teleport to="body">
+    <div v-if="isOpen" class="modal-backdrop" @click.self="close">
     <div class="modal-content">
       <div class="modal-header">
         <h3>친구 관리 및 초대</h3>
@@ -72,7 +73,8 @@
         </ul>
       </div>
     </div>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -109,7 +111,13 @@ const search = () => {
 }
 
 const getFriend = (friendship) => {
-  return friendship.from_user.email === authStore.currentUser?.email ? friendship.to_user : friendship.from_user
+  let myId = authStore.currentUser?.id
+  if (!myId && authStore.token) {
+    try {
+      myId = JSON.parse(atob(authStore.token.split('.')[1])).user_id
+    } catch (e) {}
+  }
+  return friendship.from_user.id === myId ? friendship.to_user : friendship.from_user
 }
 
 const isRequestSent = (userId) => {

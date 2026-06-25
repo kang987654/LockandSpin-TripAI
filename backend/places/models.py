@@ -6,6 +6,7 @@ class Place(models.Model):
         ('cafe', 'Cafe'),
         ('spot', 'Tourist Spot'),
         ('activity', 'Activity'),
+        ('accommodation', 'Accommodation'),
     ]
 
     name = models.CharField(max_length=200)

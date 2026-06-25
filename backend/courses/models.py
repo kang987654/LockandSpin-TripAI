@@ -42,6 +42,7 @@ class CourseDetail(models.Model):
     place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='course_slots')
     day_number = models.IntegerField(default=1, help_text="여행 일차 (1일차, 2일차 등)")
     sequence = models.IntegerField(help_text="하루 일정 내의 순서 (예: 1=오전, 2=점심, 3=오후, 4=저녁)")
+    slot_name = models.CharField(max_length=50, blank=True, help_text="AI가 지정한 슬롯 이름 (예: 만화카페)")
     is_locked = models.BooleanField(default=False, help_text="슬롯 고정(Lock) 여부")
 
     class Meta:

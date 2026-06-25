@@ -24,6 +24,23 @@ const hasCenteredOnce = ref(false)
 
 const selectedPlace = ref(null)
 const isModalOpen = ref(false)
+const selectedDay = ref('all')
+
+const draggedSlot = ref(null)
+const onDragStart = (e, slot) => {
+  draggedSlot.value = slot
+  e.dataTransfer.effectAllowed = 'move'
+}
+const onDrop = async (e, targetSlot) => {
+  if (draggedSlot.value && draggedSlot.value.day_number === targetSlot.day_number && draggedSlot.value.sequence !== targetSlot.sequence) {
+    await courseStore.swapSlotSequence(courseStore.activeCourse.id, targetSlot.day_number, draggedSlot.value.sequence, targetSlot.sequence)
+  }
+  draggedSlot.value = null
+}
+const onDragOver = (e) => {
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+}
 
 onMounted(async () => {
   await courseStore.loadCourse(route.params.id)
@@ -75,7 +92,12 @@ const updateMapRoute = () => {
   activeInfowindows.value = []
   if (pathPolyline.value) { pathPolyline.value.setMap(null); pathPolyline.value = null }
 
-  const allSlots = [...courseStore.activeCourse.slots].sort((a, b) => {
+  let allSlots = [...courseStore.activeCourse.slots]
+  if (selectedDay.value !== 'all') {
+    allSlots = allSlots.filter(s => s.day_number === selectedDay.value)
+  }
+
+  allSlots.sort((a, b) => {
     if (a.day_number !== b.day_number) return a.day_number - b.day_number
     return a.sequence - b.sequence
   })
@@ -156,17 +178,22 @@ const updateMapRoute = () => {
 }
 
 watch(() => courseStore.activeCourse, () => updateMapRoute(), { deep: true })
+watch(selectedDay, () => updateMapRoute())
 
 const slotsByDay = computed(() => {
   if (!courseStore.activeCourse?.slots) return {}
   const groups = {}
   courseStore.activeCourse.slots.forEach(slot => {
-    if (!groups[slot.day_number]) groups[slot.day_number] = []
-    groups[slot.day_number].push(slot)
+    if (selectedDay.value === 'all' || slot.day_number === selectedDay.value) {
+      if (!groups[slot.day_number]) groups[slot.day_number] = []
+      groups[slot.day_number].push(slot)
+    }
   })
   Object.values(groups).forEach(g => g.sort((a, b) => a.sequence - b.sequence))
   return groups
 })
+
+const totalDays = computed(() => courseStore.activeCourse?.duration_days || 0)
 
 const getSeqLabel = (seq) => ['오전 명소 ☀️', '점심 식사 🍲', '오후 카페 ☕️', '저녁 식사 🍖'][seq - 1] || '일정'
 
@@ -308,10 +335,11 @@ const getCompatibleSlots = (category) => {
   Object.keys(slotsByDay.value).forEach(day => {
     slotsByDay.value[day].forEach(slot => {
       let isCompatible = false;
-      if (slot.sequence === 1 && (category === 'spot' || category === 'activity')) isCompatible = true;
-      if (slot.sequence === 2 && category === 'restaurant') isCompatible = true;
-      if (slot.sequence === 3 && category === 'cafe') isCompatible = true;
-      if (slot.sequence === 4 && category === 'restaurant') isCompatible = true;
+      if (slot.place && slot.place.category === category) {
+        isCompatible = true;
+      } else if ((category === 'activity' || category === 'spot') && slot.place && (slot.place.category === 'spot' || slot.place.category === 'activity')) {
+        isCompatible = true; // Allow activity and spot interchangeably
+      }
       
       if (isCompatible) {
         comp.push({
@@ -324,6 +352,16 @@ const getCompatibleSlots = (category) => {
     });
   });
   return comp;
+}
+
+const respinText = computed(() => {
+  if (courseStore.activeCourse?.status === 'saved') return '확정된 일정'
+  if (courseStore.isSpinning) return '슬롯 재조합 중...'
+  return selectedDay.value === 'all' ? '전체 일정 Re-spin!' : `${selectedDay.value}일차만 Re-spin!`
+})
+
+const handleRespin = () => {
+  courseStore.triggerRespin(selectedDay.value === 'all' ? null : selectedDay.value)
 }
 
 </script>
@@ -357,8 +395,8 @@ const getCompatibleSlots = (category) => {
             <span>👤+</span> 일행 초대
           </button>
           
-          <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="courseStore.triggerRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">
-            <span style="font-size: 1.2rem;">🔄</span> {{ courseStore.isSpinning ? '슬롯 재조합 중...' : (courseStore.activeCourse.status === 'saved' ? '확정된 일정' : 'Re-spin!') }}
+          <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="handleRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">
+            <span style="font-size: 1.2rem;">🔄</span> {{ respinText }}
           </button>
           <button v-if="courseStore.activeCourse.status === 'draft' && (!courseStore.activeCourse.user || isCourseOwner)" class="btn-secondary" style="border-color: #10b981; color: #10b981; padding: 0.9rem 1.5rem; font-size: 1.05rem;" @click="saveCourse">
             💾 일정 확정 및 저장하기
@@ -370,10 +408,18 @@ const getCompatibleSlots = (category) => {
     <div class="planner-layout">
       <!-- Left side: Slots -->
       <div class="slots-container">
+        <!-- Day Filter Tabs -->
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; overflow-x: auto; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-muted);">
+          <button class="day-tab" :class="{ active: selectedDay === 'all' }" @click="selectedDay = 'all'">전체 일정</button>
+          <button v-for="day in totalDays" :key="day" class="day-tab" :class="{ active: selectedDay === day }" @click="selectedDay = day">
+            Day {{ day }}
+          </button>
+        </div>
+
         <div v-for="(slots, day) in slotsByDay" :key="day" style="margin-bottom: 2.5rem;">
           <h3 style="color: var(--color-primary); margin-bottom: 1.5rem; font-weight: 800; font-size: 1.4rem;">Day {{ day }}</h3>
           <div class="slot-board">
-            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item">
+            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item" draggable="true" @dragstart="onDragStart($event, slot)" @dragover="onDragOver" @drop="onDrop($event, slot)" style="cursor: grab;">
               <!-- Timeline Dot -->
               <div class="timeline-dot">
                 <div class="timeline-dot-inner"></div>
@@ -382,12 +428,14 @@ const getCompatibleSlots = (category) => {
               <!-- Slot Card -->
               <div class="slot-card-light" :class="{ locked: slot.is_locked, 'spinning-anim': courseStore.spinningSlots[`${slot.day_number}_${slot.sequence}`] }" :style="{ opacity: isExcluded(slot.place.id) ? 0.4 : 1, filter: isExcluded(slot.place.id) ? 'grayscale(100%)' : 'none' }" @click="openPlaceModal(slot.place)">
                 
+                <button v-if="courseStore.activeCourse.status === 'draft'" @click.stop="courseStore.deleteSlot(courseStore.activeCourse.id, slot.day_number, slot.sequence)" class="btn-delete-x" title="일정 삭제">✕</button>
+                
                 <div v-if="isExcluded(slot.place.id)" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: white; padding: 0.5rem 1rem; border-radius: 8px; font-weight: bold; font-size: 1.2rem; z-index: 10; pointer-events: none;">
                   🚫 제외됨
                 </div>
 
                 <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem;">
-                  <span style="font-size: 0.8rem; font-weight: 800; color: var(--color-accent); text-transform: uppercase;">{{ getSeqLabel(slot.sequence) }}</span>
+                  <span style="font-size: 0.8rem; font-weight: 800; color: var(--color-accent); text-transform: uppercase;">{{ slot.slot_name || getSeqLabel(slot.sequence) }}</span>
                   <button class="btn-lock" :class="{ 'is-locked': slot.is_locked }" @click.stop="courseStore.toggleLock(slot)">
                     {{ slot.is_locked ? '🔒 결정됨' : '🔓 이걸로 결정!' }}
                   </button>
@@ -396,7 +444,7 @@ const getCompatibleSlots = (category) => {
                 <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
                   <!-- Image placeholder -->
                   <div style="width: 80px; height: 80px; border-radius: 8px; background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%); flex-shrink: 0; display: flex; align-items: center; justify-content: center;">
-                    <span style="font-size: 1.5rem;">{{ slot.category === 'restaurant' ? '🍽️' : slot.category === 'cafe' ? '☕' : '🏞️' }}</span>
+                    <span style="font-size: 1.5rem;">{{ slot.place.category === 'restaurant' ? '🍽️' : slot.place.category === 'cafe' ? '☕' : slot.place.category === 'accommodation' ? '🛏️' : '🏞️' }}</span>
                   </div>
                   <div style="flex: 1;">
                     <h4 style="font-size: 1.15rem; font-weight: 800; margin: 0 0 0.2rem 0; color: var(--text-bright);">{{ slot.place.name }}</h4>
@@ -415,6 +463,13 @@ const getCompatibleSlots = (category) => {
 
               </div>
             </div>
+          </div>
+          
+          <div v-if="courseStore.activeCourse?.status === 'draft'" style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'spot')" class="btn-add">명소 추가</button>
+            <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'restaurant')" class="btn-add">식당 추가</button>
+            <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'cafe')" class="btn-add">카페 추가</button>
+            <button @click="courseStore.addSlot(courseStore.activeCourse.id, day, 'accommodation')" class="btn-add">숙소 추가</button>
           </div>
         </div>
       </div>
@@ -732,5 +787,69 @@ const getCompatibleSlots = (category) => {
   background-color: #f1f5f9 !important;
   box-shadow: 0 0 20px #cbd5e1;
   pointer-events: none;
+}
+.day-tab {
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  background: white;
+  border: 1px solid var(--border-muted);
+  color: var(--text-normal);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.day-tab:hover {
+  background: #f1f5f9;
+}
+.day-tab.active {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+.timeline-item:active {
+  cursor: grabbing;
+}
+.btn-add {
+  background: white;
+  border: 1px dashed var(--color-primary);
+  color: var(--color-primary);
+  padding: 0.6rem 0.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex: 1;
+  text-align: center;
+}
+.btn-add:hover {
+  background: #f5f3ff;
+  transform: translateY(-1px);
+}
+.btn-delete-x {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: white;
+  color: #ef4444;
+  border: 1px solid #fca5a5;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+  z-index: 10;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.btn-delete-x:hover {
+  background: #fee2e2;
+  transform: scale(1.1);
 }
 </style>

@@ -98,9 +98,9 @@ const createCourse = async () => {
         <div style="margin-bottom: 1rem;">
           <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem;">기피 카테고리 (Veto)</label>
           <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
-            <label v-for="cat in ['restaurant', 'cafe', 'spot', 'activity']" :key="cat" class="veto-chip" :class="{active: authStore.vetoCategories.includes(cat)}">
+            <label v-for="cat in ['restaurant', 'cafe', 'spot', 'activity', 'accommodation']" :key="cat" class="veto-chip" :class="{active: authStore.vetoCategories.includes(cat)}">
               <input type="checkbox" :value="cat" v-model="authStore.vetoCategories" style="display:none;" />
-              {{ cat === 'spot' ? '관광지' : cat === 'restaurant' ? '음식점' : cat === 'cafe' ? '카페' : '액티비티' }} 제외
+              {{ cat === 'spot' ? '명소' : cat === 'restaurant' ? '식당' : cat === 'cafe' ? '카페' : cat === 'accommodation' ? '숙박/숙소' : '액티비티' }} 🚫
             </label>
           </div>
         </div>

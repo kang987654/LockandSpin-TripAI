@@ -55,12 +55,12 @@ export const useCourseStore = defineStore('course', () => {
     }
   }
 
-  const triggerRespin = async () => {
+  const triggerRespin = async (target_day = null) => {
     if (!activeCourse.value) return
     isSpinning.value = true
 
     activeCourse.value.slots.forEach(slot => {
-      if (!slot.is_locked) {
+      if (!slot.is_locked && (!target_day || slot.day_number === target_day)) {
         spinningSlots.value[`${slot.day_number}_${slot.sequence}`] = true
       }
     })
@@ -75,6 +75,7 @@ export const useCourseStore = defineStore('course', () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 1200))
       const res = await axios.post(`${API_BASE}/api/courses/${activeCourse.value.id}/spin/`, {
+        target_day: target_day,
         slots: requestSlots
       }, authStore.getHeaders())
       activeCourse.value = res.data
@@ -205,8 +206,44 @@ export const useCourseStore = defineStore('course', () => {
     }
   }
 
+  const swapSlotSequence = async (courseId, dayNumber, seq1, seq2) => {
+    try {
+      await axios.post(`${API_BASE}/api/courses/${courseId}/swap_slot_sequence/`, {
+        day_number: dayNumber,
+        seq1: seq1,
+        seq2: seq2
+      }, authStore.getHeaders())
+    } catch (err) {
+      console.error('Swap slot sequence failed:', err)
+    }
+  }
+
+  const addSlot = async (courseId, dayNumber, category) => {
+    try {
+      await axios.post(`${API_BASE}/api/courses/${courseId}/add_slot/`, {
+        day_number: dayNumber,
+        category: category
+      }, authStore.getHeaders())
+      await loadCourse(courseId)
+    } catch (err) {
+      console.error('Add slot failed:', err)
+    }
+  }
+
+  const deleteSlot = async (courseId, dayNumber, sequence) => {
+    try {
+      await axios.post(`${API_BASE}/api/courses/${courseId}/delete_slot/`, {
+        day_number: dayNumber,
+        sequence: sequence
+      }, authStore.getHeaders())
+      await loadCourse(courseId)
+    } catch (err) {
+      console.error('Delete slot failed:', err)
+    }
+  }
+
   return {
     activeCourse, coursesList, isSpinning, spinningSlots,
-    fetchCourses, loadCourse, createCourse, triggerRespin, toggleLock, evaluateCourse, connectWebSocket, keepPlace, excludePlace, swapKeptPlace, removeKeptPlace
+    fetchCourses, loadCourse, createCourse, triggerRespin, toggleLock, evaluateCourse, connectWebSocket, keepPlace, excludePlace, swapKeptPlace, removeKeptPlace, swapSlotSequence, addSlot, deleteSlot
   }
 })
