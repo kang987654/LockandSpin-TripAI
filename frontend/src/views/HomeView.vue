@@ -124,10 +124,32 @@ const handleGenerate = async () => {
         </h2>
         
         <form @submit.prevent="handleGenerate" class="creation-form">
+          <!-- Row 1: 목적 및 테마 (Moved to Top) -->
+          <div class="form-group" style="margin-top: 0; margin-bottom: 1.5rem;">
+            <label>어떤 테마의 여행을 원하시나요? (목적을 자유롭게 적어주세요)</label>
+            <div class="input-wrapper" style="margin-top: 0.5rem;">
+              <Sparkles :size="18" class="input-icon" />
+              <input v-model="coursePurpose" type="text" placeholder="예: 비오는 날 제주도 실내 데이트 코스" />
+            </div>
+            
+            <!-- AI 동적 키워드 출력 -->
+            <div v-if="realtimeKeywords.length" class="theme-pills" style="margin-top: 1rem;">
+              <button 
+                v-for="theme in realtimeKeywords" 
+                :key="theme"
+                type="button"
+                class="theme-pill active"
+              >
+                #{{ theme }}
+              </button>
+              <span style="font-size: 0.8rem; color: var(--color-primary); align-self: center; margin-left: 0.5rem;">(AI 추천 키워드)</span>
+            </div>
+          </div>
+
           <div class="form-layout-split">
             <!-- Left Column: Title, Dates -->
             <div class="left-col">
-              <div class="form-group">
+              <div class="form-group" style="margin-top: 0;">
                 <label>여행 제목 (선택)</label>
                 <div class="input-wrapper">
                   <Sparkles :size="18" class="input-icon" />
@@ -177,32 +199,12 @@ const handleGenerate = async () => {
 
             <!-- Right Column: Map Selector -->
             <div class="right-col">
-              <div class="form-group" style="height: 100%;">
+              <div class="form-group" style="height: 100%; margin-top: 0; display: flex; flex-direction: column;">
                 <label>어디로 떠나시나요?</label>
-                <KoreaMapSelector v-model="destination" />
+                <div style="flex: 1; min-height: 0;">
+                  <KoreaMapSelector v-model="destination" />
+                </div>
               </div>
-            </div>
-          </div>
-          
-          <!-- Row 3: 목적 및 테마 -->
-          <div class="form-group" style="margin-top: 1.5rem;">
-            <label>어떤 테마의 여행을 원하시나요? (목적을 자유롭게 적어주세요)</label>
-            <div class="input-wrapper" style="margin-top: 0.5rem;">
-              <Sparkles :size="18" class="input-icon" />
-              <input v-model="coursePurpose" type="text" placeholder="예: 비오는 날 제주도 실내 데이트 코스" />
-            </div>
-            
-            <!-- AI 동적 키워드 출력 -->
-            <div v-if="realtimeKeywords.length" class="theme-pills" style="margin-top: 1rem;">
-              <button 
-                v-for="theme in realtimeKeywords" 
-                :key="theme"
-                type="button"
-                class="theme-pill active"
-              >
-                #{{ theme }}
-              </button>
-              <span style="font-size: 0.8rem; color: var(--color-primary); align-self: center; margin-left: 0.5rem;">(AI 추천 키워드)</span>
             </div>
           </div>
           

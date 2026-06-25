@@ -364,12 +364,28 @@ const handleRespin = () => {
   courseStore.triggerRespin(selectedDay.value === 'all' ? null : selectedDay.value)
 }
 
+const isAiModalOpen = ref(false)
+const isAiLoading = ref(false)
+
+const openAiModal = () => {
+  isAiModalOpen.value = true
+  isAiLoading.value = true
+  setTimeout(() => {
+    isAiLoading.value = false
+  }, 1500) // 1.5초간 작성 중인 것처럼 UX 제공
+}
+
+const closeAiModal = () => {
+  isAiModalOpen.value = false
+  isAiLoading.value = false
+}
+
 </script>
 
 <template>
-  <div v-if="courseStore.activeCourse" class="glass-card" style="margin-bottom: 2rem;">
+  <div v-if="courseStore.activeCourse" class="glass-card" style="margin: 0.5rem 1rem 0.5rem 1rem; height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0.5rem;">
 
-    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-muted); padding-bottom: 1rem; margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-muted); padding-bottom: 1rem; margin-bottom: 1rem; flex-shrink: 0;">
       <div>
         <div style="display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.5rem;">
           <h2 style="color: var(--text-bright); margin: 0;">{{ courseStore.activeCourse.title }}</h2>
@@ -481,22 +497,44 @@ const handleRespin = () => {
       <div class="map-section">
         <div id="map" class="map-container"></div>
 
-        <!-- Floating Panel: Top Right (AI Comment & Social Spin) -->
-        <div class="floating-panel-top-right">
-          <!-- AI Comment Box -->
-          <div v-if="courseStore.activeCourse.ai_comment" style="background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); padding: 1.2rem; border-radius: 12px; border: 1px solid var(--border-muted); box-shadow: 0 4px 20px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 0.8rem;">
-            <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
-              <div style="font-size: 1.5rem;">✨</div>
-              <div style="flex: 1;">
-                <h4 style="margin: 0 0 0.5rem 0; color: var(--color-primary); font-size: 0.95rem; font-weight: 800;">AI 여행 플래너의 조언</h4>
-                <p style="margin: 0; color: var(--text-normal); font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap; max-height: 400px; overflow-y: auto; padding-right: 0.5rem; text-align: left;">
-{{ courseStore.activeCourse.ai_comment }}
-                </p>
-              </div>
+        <!-- Floating Panel: Top Right (AI Comment Button) -->
+        <div class="floating-panel-top-right" v-if="!isAiModalOpen">
+          <!-- AI Comment Button -->
+          <button v-if="courseStore.activeCourse.ai_comment" 
+                  @click="openAiModal"
+                  class="btn-primary" 
+                  style="align-self: flex-end; padding: 0.8rem 1.2rem; border-radius: 99px; font-weight: 800; box-shadow: 0 4px 12px rgba(139,92,246,0.3); display: flex; align-items: center; gap: 0.5rem; transition: transform 0.2s;">
+            <span style="font-size: 1.2rem;">🤖</span> AI 조언 확인하기
+          </button>
+        </div>
+
+        <!-- Floating Panel: AI Advice Box (Expanded) -->
+        <div v-if="isAiModalOpen" style="position: absolute; top: 20px; right: 20px; z-index: 30; width: 500px; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 10px 40px rgba(0,0,0,0.15); padding: 1.5rem; pointer-events: auto; display: flex; flex-direction: column; max-height: calc(100% - 40px);">
+          <!-- Loading State -->
+          <div v-if="isAiLoading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem 0; gap: 1.2rem; flex: 1; min-height: 0;">
+            <div class="spinning-anim" style="font-size: 3rem; animation-duration: 1.2s; background: transparent !important; box-shadow: none;">🤖</div>
+            <h3 style="color: var(--text-bright); margin: 0; font-size: 1.2rem;">AI 조언을 작성하고 있습니다...</h3>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">잠시만 기다려주세요</p>
+          </div>
+          
+          <!-- Result State -->
+          <div v-else style="display: flex; flex-direction: column; height: 100%; min-height: 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-muted); padding-bottom: 1rem; margin-bottom: 1rem; flex-shrink: 0;">
+              <h2 style="color: var(--color-primary); margin: 0; display: flex; align-items: center; gap: 0.5rem; font-weight: 800; font-size: 1.2rem;">
+                <span style="font-size: 1.4rem;">✨</span> AI 여행 플래너의 조언
+              </h2>
+              <button @click="closeAiModal" style="background: none; border: none; color: var(--text-muted); font-size: 1.8rem; cursor: pointer; line-height: 1;">×</button>
             </div>
-            <button class="btn-exclude" style="align-self: flex-end; padding: 4px 10px; font-size: 0.75rem;" @click="evaluateCourseComment" :disabled="isEvaluating">
-              {{ isEvaluating ? '평가 중...' : '💡 다시 평가받기' }}
-            </button>
+            
+            <div style="color: var(--text-bright); font-size: 0.95rem; line-height: 1.7; white-space: pre-wrap; overflow-y: auto; overscroll-behavior: contain; padding-right: 0.5rem; flex: 1; min-height: 0;">
+              {{ courseStore.activeCourse.ai_comment }}
+            </div>
+
+            <div style="margin-top: 1rem; display: flex; justify-content: flex-end; border-top: 1px solid var(--border-muted); padding-top: 1rem; flex-shrink: 0;">
+              <button class="btn-secondary" style="padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 700; color: var(--color-primary); border-color: var(--color-primary); font-size: 0.9rem;" @click="evaluateCourseComment" :disabled="isEvaluating">
+                {{ isEvaluating ? '평가 중...' : '💡 조언 다시 받기' }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -579,8 +617,8 @@ const handleRespin = () => {
 
 .planner-layout {
   display: flex;
-  height: calc(100vh - 180px); /* 헤더 등을 제외한 나머지 높이 꽉 채우기 */
-  min-height: 600px;
+  flex: 1;
+  min-height: 0;
   position: relative;
   background-color: var(--bg-color);
   border-radius: 16px;

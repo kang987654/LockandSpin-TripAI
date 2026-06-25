@@ -24,7 +24,7 @@ const getYoutubeUrl = (placeName) => {
       <div class="modal-content glass-card">
         <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
           <h2 style="color: var(--text-bright); margin: 0;">{{ place?.name }} 상세 정보</h2>
-          <button @click="closeModal" style="background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer;">×</button>
+          <button @click="closeModal" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">×</button>
         </div>
 
         <p style="color: var(--text-muted); margin-bottom: 1rem;">📍 {{ place?.address }}</p>

@@ -11,20 +11,20 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const regions = [
-  { id: 'seoul', name: '서울', top: '22%', left: '42%', pos: 'left' },
-  { id: 'gyeonggi', name: '경기', top: '27%', left: '44%', pos: 'right' },
-  { id: 'gangwon', name: '강원', top: '18%', left: '59%', pos: 'right' },
-  { id: 'chungbuk', name: '충북', top: '38%', left: '52%', pos: 'right' },
-  { id: 'chungnam', name: '충남', top: '42%', left: '38%', pos: 'left' },
-  { id: 'daejeon', name: '대전', top: '46%', left: '45%', pos: 'bottom' },
-  { id: 'gyeongbuk', name: '경북', top: '44%', left: '67%', pos: 'right' },
-  { id: 'jeonbuk', name: '전북', top: '55%', left: '41%', pos: 'left' },
-  { id: 'daegu', name: '대구', top: '55%', left: '62%', pos: 'top' },
-  { id: 'gyeongnam', name: '경남', top: '63%', left: '56%', pos: 'left' },
-  { id: 'ulsan', name: '울산', top: '59%', left: '69%', pos: 'right' },
-  { id: 'gwangju', name: '광주', top: '66%', left: '36%', pos: 'left' },
-  { id: 'jeonnam', name: '전남', top: '73%', left: '33%', pos: 'bottom' },
-  { id: 'busan', name: '부산', top: '66%', left: '68%', pos: 'right' },
+  { id: 'seoul', name: '서울', top: '20%', left: '42%', pos: 'left' },
+  { id: 'gyeonggi', name: '경기', top: '25%', left: '44%', pos: 'right' },
+  { id: 'gangwon', name: '강원', top: '16%', left: '59%', pos: 'right' },
+  { id: 'chungbuk', name: '충북', top: '36%', left: '52%', pos: 'right' },
+  { id: 'chungnam', name: '충남', top: '40%', left: '38%', pos: 'left' },
+  { id: 'daejeon', name: '대전', top: '44%', left: '45%', pos: 'bottom' },
+  { id: 'gyeongbuk', name: '경북', top: '42%', left: '67%', pos: 'right' },
+  { id: 'jeonbuk', name: '전북', top: '53%', left: '41%', pos: 'left' },
+  { id: 'daegu', name: '대구', top: '53%', left: '62%', pos: 'top' },
+  { id: 'gyeongnam', name: '경남', top: '61%', left: '56%', pos: 'left' },
+  { id: 'ulsan', name: '울산', top: '57%', left: '69%', pos: 'right' },
+  { id: 'gwangju', name: '광주', top: '64%', left: '36%', pos: 'left' },
+  { id: 'jeonnam', name: '전남', top: '71%', left: '33%', pos: 'bottom' },
+  { id: 'busan', name: '부산', top: '64%', left: '68%', pos: 'right' },
   { id: 'jeju', name: '제주', top: '97%', left: '31%', pos: 'bottom' }
 ]
 
@@ -60,7 +60,6 @@ const selectRegion = (name) => {
 .korea-map-container {
   width: 100%;
   height: 100%;
-  min-height: 350px;
   background: #f8fafc;
   border-radius: 12px;
   border: 1px solid var(--border-muted);
@@ -69,13 +68,16 @@ const selectRegion = (name) => {
   display: flex;
   justify-content: center;
   align-items: center;
+  padding: 1rem 0;
 }
 
 .map-background {
   position: relative;
   width: 100%;
-  max-width: 320px;
+  max-width: 280px;
   aspect-ratio: 1 / 1;
+  transform: scale(1.25);
+  transform-origin: center center;
 }
 
 .map-img {

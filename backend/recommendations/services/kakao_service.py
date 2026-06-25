@@ -3,6 +3,28 @@ import requests
 from recommendations.models import FixedPlace, Tag
 
 
+def _determine_category(doc: dict, requested_category: str) -> str:
+    """카카오 API의 실제 카테고리 데이터를 기반으로 올바른 분류를 추론합니다."""
+    cat_name = doc.get("category_name", "")
+    if "카페" in cat_name or "커피" in cat_name or "다방" in cat_name:
+        return "카페"
+    if "음식점" in cat_name or "식당" in cat_name or "간식" in cat_name:
+        return "음식점"
+    if "숙박" in cat_name or "호텔" in cat_name or "펜션" in cat_name or "모텔" in cat_name or "리조트" in cat_name:
+        return "숙박"
+    if "관광" in cat_name or "여행" in cat_name or "명소" in cat_name or "문화" in cat_name or "예술" in cat_name:
+        return "관광명소"
+    if "체험" in cat_name or "공방" in cat_name or "테마파크" in cat_name:
+        return "액티비티"
+        
+    group_name = doc.get("category_group_name", "")
+    if group_name == "음식점": return "음식점"
+    if group_name == "카페": return "카페"
+    if group_name == "숙박": return "숙박"
+    if group_name == "관광명소" or group_name == "문화시설": return "관광명소"
+    
+    return requested_category
+
 def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
     """
     카카오 로컬 API로 장소를 검색하고 FixedPlace DB에 저장/업데이트합니다.
@@ -68,12 +90,13 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
                 pass
 
         try:
+            real_category = _determine_category(doc, category)
             place = FixedPlace.objects.create(
                 id=place_id,
                 name=doc["place_name"],
                 address=doc["address_name"],
                 region=region,
-                category=category,
+                category=real_category,
                 latitude=float(doc.get("y", 0)),
                 longitude=float(doc.get("x", 0)),
                 image_url=img_url,

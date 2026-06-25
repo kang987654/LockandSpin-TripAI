@@ -209,15 +209,21 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             all_places = Place.objects.all()
 
         for day in range(1, course.duration_days + 1):
-            for seq in range(1, 5):
+            is_last_day = (day == course.duration_days)
+            # fallback에서는 일단 명소-식당-카페-식당-(숙소) 고정 패턴을 사용합니다.
+            slots_count = 4 if is_last_day else 5
+            
+            for seq in range(1, slots_count + 1):
                 if seq == 1:
                     categories = ['spot', 'activity']
                 elif seq == 2:
                     categories = ['restaurant']
                 elif seq == 3:
                     categories = ['cafe']
-                else:
+                elif seq == 4:
                     categories = ['restaurant']
+                else:
+                    categories = ['accommodation']
 
                 candidates = all_places.filter(category__in=categories).exclude(category__in=veto_codes)
                 

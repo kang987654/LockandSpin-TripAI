@@ -237,7 +237,7 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
     # 4. 풀이 비어있는 카테고리는 내부 DB에서 보완 (지역 필터 필수)
     dest_prefix = destination[:2] if destination != '랜덤' else None
 
-    for jw_cat in ['spot', 'restaurant', 'cafe', 'activity']:
+    for jw_cat in ['spot', 'restaurant', 'cafe', 'activity', 'accommodation']:
         if len(slot_pool[jw_cat]) < 2:
             qs = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes)
             if dest_prefix:
