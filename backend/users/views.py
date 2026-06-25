@@ -47,8 +47,9 @@ class ConfigView(APIView):
     permission_classes = (permissions.AllowAny,)
 
     def get(self, request):
+        key = os.environ.get('KAKAO_JS_KEY', '')
         return Response({
-            "kakao_javascript_key": os.environ.get('KAKAO_JS_KEY')
+            "kakao_javascript_key": key.strip("'").strip('"')
         })
 
 from users.models import Friendship

@@ -44,6 +44,8 @@ class CourseDetail(models.Model):
     sequence = models.IntegerField(help_text="하루 일정 내의 순서 (예: 1=오전, 2=점심, 3=오후, 4=저녁)")
     slot_name = models.CharField(max_length=50, blank=True, help_text="AI가 지정한 슬롯 이름 (예: 만화카페)")
     is_locked = models.BooleanField(default=False, help_text="슬롯 고정(Lock) 여부")
+    reason = models.TextField(blank=True, default='', help_text="AI 추천 이유")
+    alternative_option = models.TextField(blank=True, default='', help_text="대체 가능 옵션")
 
     class Meta:
         ordering = ['day_number', 'sequence']

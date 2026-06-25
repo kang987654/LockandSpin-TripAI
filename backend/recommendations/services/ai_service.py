@@ -10,48 +10,85 @@ from recommendations.models import AICache
 
 # 1. 여행 취향 및 요구사항 자연어 파싱 프롬프트
 USER_REQUEST_PARSE_PROMPT = """
-당신은 사용자 여행 및 데이트 코스 추천 AI입니다.
-사용자의 여행 지역: "{region}"
-여행 날짜: "{travel_date}" (총 {duration_days}일 일정)
-출발 시간: "{departure_time}"
-교통 수단: "{transportation}"
-사용자의 요구사항: "{query}"
+# Role
+당신은 즉흥적이고 유연한 여행을 선호하는 여행자들을 위해 최적의 일정 뼈대를 설계해 주는 'AI 트래블 디렉터'입니다. 당신의 핵심 목표는 분 단위의 빡빡한 계획을 강요하는 것이 아니라, 현지 상황에 따라 언제든 일정을 수정할 수 있도록 여유 공간(Buffer)이 충분한 '감각적이고 직관적인 가이드라인'을 제공하는 것입니다.
 
-위 정보를 바탕으로 검색을 위한 카테고리와 태그를 추출하고, 여행 일자별(daily_slots)로 필요한 슬롯의 구조를 설계하세요.
+# Input Variables
+- Destination (장소): {region}
+- Vehicle (차량 유무): {transportation}
+- Departure Time (출발 시간): {departure_time}
+- Travel Dates (여행 날짜): {travel_date}
+- Duration (여행 기간): {duration_days}일
+- Theme (여행 테마): {query}
 
-[지시사항]
-1. 이제부터 당신(AI)이 일정을 **처음부터 끝까지 주도적으로 완벽하게 계획**해야 합니다. 사용자가 입력한 테마와 정보를 분석하여 완벽한 동선을 세우세요.
-2. 당신이 세운 계획(음식점, 카페, 숙소, 놀거리 등)을 바탕으로, 거리와 이동수단({transportation})을 종합적으로 계산하여 **가야 할 장소들의 구체적 키워드(지역명+장소명 또는 지역명+업종)**를 정하세요. 
-3. **[매우 중요]** 정해진 장소 키워드들은 **반드시 `daily_slots`에 생성된 총 슬롯 개수만큼 전부 `specific_places` 배열에 순서대로 채워 넣어야 합니다.** (백엔드에서 임의로 랜덤 배정하지 못하도록 당신이 전부 지정해야 합니다.)
-4. 장소를 결정할 때 다음의 **우선순위**를 엄격하게 지키세요:
-   - **1순위: 위치 및 이동 동선** (첫 장소나 유저가 요구한 특정 동네를 중심으로, 장소 간 이동 거리를 최소화하는 최적의 동선 흐름을 만드세요)
-   - **2순위: 사용자의 니즈** (유저가 요구한 카페, 만화카페, 공방 등의 특수 목적)
-   - **3순위: 이동수단** (도보/대중교통이면 무조건 가까운 곳, 차량이면 동선이 조금 길어도 허용)
-5. 여행 기간({duration_days}일)과 출발 시간({departure_time})을 고려하여 `daily_slots`를 동적으로 구성하세요. 
-   - **[숙박 필수 규칙]** 1박 이상의 일정({duration_days}일 > 1)일 경우, 마지막 날을 제외한 매일 저녁 일정 마지막에는 반드시 **"숙소"**(Accommodation) 슬롯을 포함시키세요.
-   - 1일차 출발 시간이 오후(예: 14:00)라면 오전 일정은 빼고 점심/카페/저녁 등으로 알맞게 축소하세요.
+# Core Logic 1: 조건별 동선 및 일정 설계 (Strict Routing)
+1. 출발 시간 (Departure Time) 반영:
+   - 1일 차 일정은 반드시 [Departure Time] + [장소까지의 예상 이동 시간] 이후부터 시작합니다.
+   - 늦은 오후나 저녁 도착인 경우, 무리한 스팟 방문을 배제하고 숙소 체크인, 가벼운 저녁 식사 및 야경/산책 위주로만 일정을 구성합니다.
 
-응답은 반드시 아래 형식의 유효한 JSON 문자열이어야 하며, 마크다운(```json 등)을 포함하지 마세요.
+2. 차량 유무 (Vehicle) 반영에 따른 동선 제어:
+   - [대중교통/도보]: (가장 중요) 여행 피로도를 최소화하기 위해 '동일한 구/동' 또는 '단일 지하철/버스 노선' 내에서 일정이 해결되도록 스팟을 강하게 묶습니다(Clustering). 스팟 간 이동 시간은 도보 15분, 대중교통 20분 이내로 엄격히 제한합니다. 환승이 2회 이상 필요한 복잡한 동선은 절대 배제하며, 무거운 짐을 고려해 터미널/기차역/숙소 주변을 중심으로 동선을 짭니다.
+   - [자차/렌트카]: 스팟 간 이동 거리 제한을 여유롭게 두고(최대 40~50분), 드라이브 코스, 외곽의 대형 카페, 주차 공간이 확실히 확보된 장소를 적극적으로 포함합니다.
 
+# Core Logic 2: 숙소 (Accommodation) 배치 규칙
+- 당일치기를 제외한 모든 일정에는 매일 1회의 숙소(Check-in/Rest) 일정을 베이스로 필수 삽입합니다.
+- 배치 타이밍: 오후 일정과 저녁 식사 사이(16:00~18:00)에 잠시 들러 짐을 풀고 휴식하거나, 일정 마무리 직전(20:00 이후)에 배치합니다.
+- 숙소 위치 기준: 1일 차 메인 활동 지역과 2일 차 오전 활동 지역의 중간 지점, 대중교통 이용 시 대중교통 거점(역/터미널) 근처로 상정합니다.
+
+# Core Logic 3: 기간별 베이스 캠프 (Day-by-Day Blueprint)
+[당일치기]
+- 시작: 도착 시점 이후
+- 흐름: 메인 테마 스팟 1 -> 점심 -> 메인 테마 스팟 2 -> 카페 -> 저녁 후 귀가
+
+[1박 2일]
+- 1일 차: 도착 -> 테마 몰입 스팟 -> [숙소 체크인 및 휴식] -> 로컬 저녁 식사 -> 가벼운 야간 산책
+- 2일 차: 여유로운 브런치 -> 터미널/역/IC 근처 스팟 1곳 -> 귀가
+
+[2박 3일]
+- 1일 차: 도착 -> 주변 탐색 -> [숙소 체크인] -> 저녁 식사
+- 2일 차(메인): 오전 메인 스팟 -> 점심 -> 오후 액티비티/투어 -> [숙소 휴식] -> 저녁 식사 -> 야간 핫플레이스
+- 3일 차: 체크아웃 -> 뷰가 좋은 테마 카페 혹은 기념품/소품샵 -> 귀가
+
+[3박 4일]
+- 1일 차: 여유로운 도착 및 [숙소 체크인], 분위기 적응
+- 2일 차: 가장 활동적인 테마 스팟 집중 공략
+- 3일 차: [여백의 날] 오전을 비워두어 늦잠을 허용하거나, 한적한 근교로 빠져 템포를 늦추는 힐링 일정 배치
+- 4일 차: 체크아웃 -> 아쉬움을 달래는 스팟 1곳 -> 점심 후 귀가
+
+# Output Instruction
+1. 빡빡한 스케줄은 피하고, 스팟 간 충분한 여유 시간(Buffer)을 두세요. 
+2. 각 스팟마다 "왜 이 장소를 추천하는지" 1줄 이유를 포함하세요.
+3. 여행자가 변덕을 부릴 수 있도록, 일정 중 최소 1~2곳에는 대체 가능한 '옵션(Alternative)'을 짧게 제안하세요.
+4. [매우 중요] 각 일차별 `schedules` 배열의 길이는 반드시 'Core Logic 3'에 제시된 화살표(->) 단계 수에 맞춰 최소화하세요. (예: 1박 2일의 1일 차는 3~4개의 장소만 추천).
+5. [매우 중요] "도착", "주변 탐색", "귀가", "여유로운 브런치(장소 미정)" 처럼 구체적인 장소가 없는 단순 상태나 이동은 `schedules` 목록에 포함하지 마세요. 오직 실제 방문할 식당, 카페, 명소, 숙소만 배열에 넣으세요.
+6. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
+
+# JSON Output Format (Strict)
+```json
 {{
-    "region": "{region}",
-    "specific_places": ["애월 카페", "애월 해변 관광명소", "애월 흑돼지 음식점", "애월 오션뷰 숙소", "애월 해물라면 음식점", "애월 소품샵 관광명소", "애월 디저트 카페"],
-    "daily_slots": {{
-        "1": ["카페", "관광명소", "음식점", "숙소"],
-        "2": ["음식점", "관광명소", "카페"]
-    }},
-    "fixed_places": [
-        {{"category": "카페", "tags": ["실내", "분위기있는"]}},
-        {{"category": "음식점", "tags": ["데이트"]}},
-        {{"category": "숙소", "tags": ["오션뷰"]}}
-    ],
-    "temporary_events": [
-        {{"category": "팝업스토어", "tags": ["실내"]}}
-    ]
+  "itinerary_summary": {{
+    "title": "AI가 추천하는 여행 요약 타이틀",
+    "total_days": "{duration_days}일",
+    "theme_matched": ["매칭된", "핵심", "키워드"]
+  }},
+  "daily_plans": [
+    {{
+      "day": 1,
+      "date": "{travel_date}",
+      "route_summary": "1일 차 동선 요약 (예: 도착 및 해운대구 중심 탐색)",
+      "schedules": [
+        {{
+          "time_slot": "오전/오후/저녁",
+          "activity_type": "Spot / Meal / Cafe / Accommodation",
+          "location_name": "추천 장소 이름",
+          "reason": "이 장소를 추천하는 1줄 이유",
+          "alternative_option": "기분에 따라 변경 가능한 대체 옵션 1개 (없으면 null)"
+        }}
+      ]
+    }}
+  ]
 }}
-
-고정적 장소(음식점, 카페, 숙소, 공방, 액티비티, 관광명소 등)는 fixed_places에,
-일시적 행사(팝업, 전시회, 공연, 축제 등)는 temporary_events에 분류하세요.
+```
 """
 
 # 2. 생성된 코스 피드백 및 조언 작성 프롬프트
@@ -188,7 +225,7 @@ def parse_user_request(region: str, travel_date: str, query: str, duration_days:
 
             data = json.loads(raw_text)
 
-            if "fixed_places" in data or "temporary_events" in data:
+            if "daily_plans" in data:
                 AICache.objects.get_or_create(query_key=cache_key, defaults={"parsed_result": data})
 
             return data
@@ -242,46 +279,43 @@ def extract_realtime_keywords(query: str) -> dict:
 
 def _fallback_parse(region: str, travel_date: str, query: str) -> dict:
     """Gemini API 실패 시 키워드 기반 폴백 파싱"""
-    fallback_data = {
-        "region": region,
-        "travel_date": travel_date,
-        "fixed_places": [],
-        "temporary_events": []
-    }
-
-    tags = ["데이트"]
-    if "실내" in query or "비" in query:
-        tags.append("실내")
-    if "조용" in query:
-        tags.append("조용한")
-    if "가성비" in query:
-        tags.append("가성비")
-    if "힐링" in query:
-        tags.append("힐링")
-
-    if "카페" in query or "커피" in query or "디저트" in query:
-        fallback_data["fixed_places"].append({"category": "카페", "tags": tags})
-    if "밥" in query or "식당" in query or "맛집" in query or "음식" in query:
-        fallback_data["fixed_places"].append({"category": "음식점", "tags": tags})
-    if "공방" in query or "만들기" in query:
-        fallback_data["fixed_places"].append({"category": "공방", "tags": tags})
-    if "관광" in query or "명소" in query or "여행" in query:
-        fallback_data["fixed_places"].append({"category": "관광명소", "tags": tags})
-
-    if "전시" in query or "미술" in query:
-        fallback_data["temporary_events"].append({"category": "전시회", "tags": []})
-    if "팝업" in query or "스토어" in query:
-        fallback_data["temporary_events"].append({"category": "팝업스토어", "tags": []})
-
-    # 아무 키워드도 없을 때 기본값
-    if not fallback_data["fixed_places"] and not fallback_data["temporary_events"]:
-        fallback_data["fixed_places"] = [
-            {"category": "관광명소", "tags": tags},
-            {"category": "음식점", "tags": tags},
-            {"category": "카페", "tags": tags},
+    return {
+        "itinerary_summary": {
+            "title": f"{region} 추천 코스",
+            "total_days": "1일",
+            "theme_matched": ["추천", "여행"]
+        },
+        "daily_plans": [
+            {
+                "day": 1,
+                "date": travel_date,
+                "route_summary": f"{region} 알짜배기 당일치기 코스",
+                "schedules": [
+                    {
+                        "time_slot": "오전",
+                        "activity_type": "Spot",
+                        "location_name": f"{region} 인기 명소",
+                        "reason": "가장 유명한 랜드마크입니다.",
+                        "alternative_option": None
+                    },
+                    {
+                        "time_slot": "점심",
+                        "activity_type": "Meal",
+                        "location_name": f"{region} 맛집",
+                        "reason": "현지인 추천 맛집입니다.",
+                        "alternative_option": None
+                    },
+                    {
+                        "time_slot": "오후",
+                        "activity_type": "Cafe",
+                        "location_name": f"{region} 카페",
+                        "reason": "경치가 좋은 카페입니다.",
+                        "alternative_option": None
+                    }
+                ]
+            }
         ]
-
-    return fallback_data
+    }
 
 def recommend_food_menu(region: str, preference: str) -> dict:
     """사용자 기분/원하는 메뉴 기반으로 식당 1곳 추천"""

@@ -20,7 +20,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CourseDetail
-        fields = ('day_number', 'sequence', 'is_locked', 'place', 'slot_name')
+        fields = ('day_number', 'sequence', 'is_locked', 'place', 'slot_name', 'reason', 'alternative_option')
 
 
 class TravelCourseSerializer(serializers.ModelSerializer):

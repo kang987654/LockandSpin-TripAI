@@ -70,114 +70,117 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                 transportation=course.transportation
             )
 
+            # 사용자의 원본 입력을 보존 (AI가 덮어쓰기 전)
+            original_user_input = course.preferences or ""
+
             used_ids = []
+            daily_plans = parsed.get('daily_plans', [])
+            summary = parsed.get('itinerary_summary', {})
             
-            # 처리할 특정 장소들 (카카오 검색 후 풀에 추가)
-            specific_places = parsed.get('specific_places', [])
-            specific_place_objs = []
-            if specific_places:
-                from recommendations.services.kakao_service import fetch_and_save_kakao_places
-                from recommendations.services.recommendation_service import _fixed_place_to_place
-                for sp_name in specific_places:
-                    # 카테고리 지정 없이 지역명 + 장소명으로 카카오 텍스트 검색 (모든 업종 검색)
-                    new_fps = fetch_and_save_kakao_places(course.destination, '', [sp_name])
-                    if new_fps:
-                        p = _fixed_place_to_place(new_fps[0], course.destination)
-                        specific_place_objs.append(p)
-
-            for day in range(1, course.duration_days + 1):
-                is_last_day = (day == course.duration_days)
-                is_first_day = (day == 1)
+            if summary:
+                new_title = summary.get('title')
+                themes = summary.get('theme_matched', [])
+                if new_title:
+                    course.title = new_title
+                if themes:
+                    course.preferences = ", ".join(themes)
+                course.save()
+            
+            # 사용자 원본 입력에서 세부 지명 및 테마 키워드 추출
+            import re
+            region_match = re.search(r'([가-힣]+(?:구|동|역|면|읍|리))|강남|홍대|성수|이태원|건대|신촌|잠실|해운대|서면|종로|명동|여의도|신림|연남|망원|한남|압구정|청담', original_user_input)
+            region_keyword = region_match.group(0) if region_match else course.destination
+            
+            # 사용자 입력에서 검색에 유용한 테마 키워드 추출 (지역명과 노이즈 단어 제거)
+            clean_theme = re.sub(
+                r'데이트|코스|추천|가볼만한곳|일정|짜줘|부탁해|해줘|비\s*오는\s*날|좋은\s*곳|여행|맛집|맨집',
+                '', original_user_input
+            ).strip()
+            # 지역명도 제거
+            if region_keyword and region_keyword in clean_theme:
+                clean_theme = clean_theme.replace(region_keyword, '').strip()
+            # destination도 제거
+            clean_theme = clean_theme.replace(course.destination, '').strip()
+            # 예: '잠실 만화카페 데이트' -> clean_theme = '만화카페'
+            
+            for plan in daily_plans:
+                day = plan.get('day', 1)
+                schedules = plan.get('schedules', [])
                 
-                if is_last_day and course.duration_days > 1:
-                    day_plan = ["음식점", "관광명소", "음식점", "카페"]
-                else:
-                    effective_hour = course.departure_time.hour if (is_first_day and course.departure_time) else 9
-                    if effective_hour < 12:
-                        day_plan = ["관광명소", "음식점", "카페", "관광명소", "음식점"]
-                    elif effective_hour < 17:
-                        day_plan = ["음식점", "관광명소", "카페", "음식점"]
-                    else:
-                        day_plan = ["음식점", "관광명소"]
+                for seq, schedule in enumerate(schedules, start=1):
+                    location_name = schedule.get('location_name')
+                    activity_type = schedule.get('activity_type', 'Spot')
+                    reason = schedule.get('reason', '')
+                    alternative = schedule.get('alternative_option', '')
+                    time_slot = schedule.get('time_slot', '일정')
                     
-                    if not is_last_day:
-                        day_plan.append("숙박")
-
-                for seq, category_name in enumerate(day_plan, start=1):
-                    # 카테고리에 맞는 영문 키 매핑
-                    jw_cat = 'spot'
-                    if '음식' in category_name or '식당' in category_name or '맛집' in category_name: jw_cat = 'restaurant'
-                    elif '카페' in category_name or '디저트' in category_name: jw_cat = 'cafe'
-                    elif '숙소' in category_name or '호텔' in category_name or '숙박' in category_name: jw_cat = 'accommodation'
-                    elif '액티비티' in category_name or '체험' in category_name: jw_cat = 'activity'
-
+                    # AI가 지정한 카테고리 (검색 fallback용으로만 사용)
+                    ai_cat = 'spot'
+                    if 'Meal' in activity_type or 'Restaurant' in activity_type: ai_cat = 'restaurant'
+                    elif 'Cafe' in activity_type: ai_cat = 'cafe'
+                    elif 'Accommodation' in activity_type: ai_cat = 'accommodation'
+                    
+                    # 실제 장소의 카테고리에서 slot_name을 결정하는 매핑
+                    cat_map = {
+                        'restaurant': '음식점',
+                        'cafe': '카페',
+                        'accommodation': '숙소',
+                        'spot': '관광명소',
+                        'activity': '액티비티'
+                    }
+                    
                     place = None
-                    # 특정 장소가 남아있다면 우선 할당
-                    if specific_place_objs:
-                        place = specific_place_objs.pop(0)
-                        used_ids.append(place.id)
-                    else:
-                        # 이미 할당된 장소들의 지역구(Gu)를 분석하여 해당 지역구 위주로 필터링
-                        current_places = [c.place for c in CourseDetail.objects.filter(course=course)]
-                        preferred_gu = None
-                        if current_places:
-                            from collections import Counter
-                            gu_list = []
-                            for cp in current_places:
-                                parts = cp.address.split()
-                                if len(parts) >= 2:
-                                    gu_list.append(parts[1])
-                            if gu_list:
-                                preferred_gu = Counter(gu_list).most_common(1)[0][0]
+                    if location_name:
+                        from recommendations.services.kakao_service import fetch_and_save_kakao_places
+                        from recommendations.services.recommendation_service import _fixed_place_to_place
                         
-                        # slot_pool을 preferred_gu로 필터링한 임시 풀 생성
-                        local_slot_pool = {}
-                        for k, v in slot_pool.items():
-                            if preferred_gu:
-                                local_v = [p for p in v if preferred_gu in p.address]
-                                if not local_v: # 부족하면 원본 풀 사용
-                                    local_v = v
-                                local_slot_pool[k] = local_v
-                            else:
-                                local_slot_pool[k] = v
+                        # 1차: AI가 추천한 장소명으로 직접 검색 (카테고리 필터 없이 이름으로 정확 검색)
+                        search_query = location_name if region_keyword in location_name else f"{region_keyword} {location_name}"
+                        new_fps = fetch_and_save_kakao_places(search_query, '', [])
+                        
+                        # 2차: AI 장소명 실패 시, location_name의 첫 단어(명사)로 검색
+                        if not new_fps and location_name:
+                            cleaned_loc = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', location_name)
+                            words = cleaned_loc.split()
+                            if words:
+                                fallback_query = f"{region_keyword} {words[0]}"
+                                new_fps = fetch_and_save_kakao_places(fallback_query, '', [])
+                                
+                        # 3차: 이 슬롯이 핵심 테마와 관련이 있는 경우에만 사용자 원본 테마 키워드로 검색
+                        if not new_fps and clean_theme and (clean_theme in location_name or clean_theme in reason):
+                            fallback_query = f"{region_keyword} {clean_theme}"
+                            new_fps = fetch_and_save_kakao_places(fallback_query, '', [])
+                            
+                        if new_fps:
+                            for fp in new_fps:
+                                candidate = _fixed_place_to_place(fp, course.destination)
+                                if candidate.id not in used_ids:
+                                    place = candidate
+                                    break
 
+                    if not place:
+                        # Fallback to slot_pool if kakao fails or location_name is empty
                         last_place = None
                         if used_ids:
                             from places.models import Place
                             last_place = Place.objects.filter(id=used_ids[-1]).first()
-                            
                         last_coords = (last_place.latitude, last_place.longitude) if last_place else None
+                        place = pick_place_for_slot(slot_pool, seq, used_ids, target_category=ai_cat, transportation=course.transportation, last_coords=last_coords)
                         
-                        place = pick_place_for_slot(local_slot_pool, seq, used_ids, target_category=jw_cat, transportation=course.transportation, last_coords=last_coords)
-                        
-                        if not place and preferred_gu:
-                            # 그래도 없으면 카카오 API로 해당 지역 장소 긴급 보충
-                            from recommendations.services.kakao_service import fetch_and_save_kakao_places
-                            from recommendations.services.recommendation_service import _fixed_place_to_place
-                            jw_to_kakao = {'spot': '관광명소', 'restaurant': '음식점', 'cafe': '카페', 'activity': '액티비티', 'accommodation': '숙박'}
-                            kakao_cat = jw_to_kakao.get(jw_cat, '관광명소')
-                            search_region = f"{course.destination} {preferred_gu}"
-                            
-                            new_fps = fetch_and_save_kakao_places(search_region, kakao_cat, [])
-                            if new_fps:
-                                for fp in new_fps:
-                                    _fixed_place_to_place(fp, search_region)
-                                from places.models import Place
-                                qs = Place.objects.filter(category=jw_cat, address__contains=search_region).exclude(id__in=used_ids)
-                                if qs.exists():
-                                    place = list(qs.order_by('?')[:1])[0]
-
-                        if place:
-                            used_ids.append(place.id)
-                    
                     if place:
+                        used_ids.append(place.id)
+                        # slot_name은 실제로 찾은 장소의 카테고리를 기반으로 결정
+                        # (AI가 "Accommodation"이라 했어도 실제 장소가 카페면 "카페"로 표시)
+                        actual_slot_name = cat_map.get(place.category, '일정')
                         CourseDetail.objects.create(
                             course=course,
                             place=place,
                             day_number=day,
                             sequence=seq,
-                            slot_name=category_name,
-                            is_locked=False
+                            slot_name=actual_slot_name,
+                            is_locked=False,
+                            reason=reason,
+                            alternative_option=alternative or ''
                         )
 
             # 생성 완료 후 AI 코멘트 작성
@@ -409,18 +412,24 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
         seq1 = request.data.get('seq1')
         seq2 = request.data.get('seq2')
 
-        detail1 = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=seq1).first()
-        detail2 = CourseDetail.objects.filter(course=course, day_number=day_number, sequence=seq2).first()
-
-        if detail1 and detail2:
-            detail1.sequence = 9999
-            detail1.save()
-
-            detail2.sequence = seq1
-            detail2.save()
-
-            detail1.sequence = seq2
-            detail1.save()
+        slots = list(CourseDetail.objects.filter(course=course, day_number=day_number).order_by('sequence'))
+        
+        from_idx = None
+        target_idx = None
+        for i, s in enumerate(slots):
+            if s.sequence == seq1:
+                from_idx = i
+            if s.sequence == seq2:
+                target_idx = i
+                
+        if from_idx is not None and target_idx is not None:
+            moving_slot = slots.pop(from_idx)
+            slots.insert(target_idx, moving_slot)
+            
+            # 1부터 순서대로 sequence 재부여
+            for i, s in enumerate(slots, start=1):
+                s.sequence = i
+                s.save()
 
             from channels.layers import get_channel_layer
             from asgiref.sync import async_to_sync
@@ -583,6 +592,16 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             if gu_list:
                 most_common_gu = Counter(gu_list).most_common(1)[0][0]
 
+        # 테마 키워드 추출
+        import re
+        clean_theme = ""
+        if course.preferences:
+            clean_theme = re.sub(r'데이트|코스|추천|가볼만한곳|일정|짜줘|부탁해|해줘|비\s*오는\s*날|좋은\s*곳|여행|맛집|맨집', '', course.preferences).strip()
+            if primary_dest:
+                clean_theme = clean_theme.replace(primary_dest, '').strip()
+            themes = [t.strip() for t in clean_theme.split(',')]
+            clean_theme = themes[0] if themes else ""
+
         # 5. 미잠금 슬롯 대상 재추천
         if target_day:
             unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False, day_number=target_day)
@@ -590,12 +609,22 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False)
             
         for detail in unlocked_details:
-            jw_cat = 'spot'
-            if '음식' in detail.slot_name or '식당' in detail.slot_name or '맛집' in detail.slot_name: jw_cat = 'restaurant'
-            elif '카페' in detail.slot_name or '디저트' in detail.slot_name: jw_cat = 'cafe'
-            elif '숙소' in detail.slot_name or '호텔' in detail.slot_name or '숙박' in detail.slot_name: jw_cat = 'accommodation'
-            elif '액티비티' in detail.slot_name or '체험' in detail.slot_name: jw_cat = 'activity'
+            if detail.place:
+                jw_cat = detail.place.category
+            else:
+                jw_cat = 'spot'
+                if '음식' in detail.slot_name or '식당' in detail.slot_name or '맛집' in detail.slot_name: jw_cat = 'restaurant'
+                elif '카페' in detail.slot_name or '디저트' in detail.slot_name: jw_cat = 'cafe'
+                elif '숙소' in detail.slot_name or '호텔' in detail.slot_name or '숙박' in detail.slot_name: jw_cat = 'accommodation'
+                elif '액티비티' in detail.slot_name or '체험' in detail.slot_name: jw_cat = 'activity'
             
+            is_theme_slot = False
+            if clean_theme:
+                if detail.place and (clean_theme in detail.place.name or clean_theme in detail.reason):
+                    is_theme_slot = True
+                elif not detail.place and (clean_theme in detail.reason or clean_theme in detail.slot_name):
+                    is_theme_slot = True
+
             categories = [jw_cat]
 
             # 기본 카테고리 후보 필터링 (비토 제외)
@@ -609,6 +638,13 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                 gu_candidates = candidates.filter(address__contains=most_common_gu)
                 if gu_candidates.exists():
                     candidates = gu_candidates
+                    
+            if is_theme_slot:
+                theme_candidates = candidates.filter(name__contains=clean_theme)
+                if theme_candidates.exists():
+                    candidates = theme_candidates
+                else:
+                    candidates = Place.objects.none()
             
             # 기존 장소 목록 수집
             current_place_ids = [c.place_id for c in CourseDetail.objects.filter(course=course)]
@@ -627,8 +663,12 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                 kakao_cat = jw_to_kakao.get(categories[0], '관광명소')
                 
                 search_region = f"{primary_dest} {most_common_gu}" if (primary_dest and most_common_gu) else (primary_dest or course.destination)
+                if is_theme_slot:
+                    kakao_search_query = f"{search_region} {clean_theme}"
+                else:
+                    kakao_search_query = search_region
                 
-                new_fps = fetch_and_save_kakao_places(search_region, kakao_cat, [])
+                new_fps = fetch_and_save_kakao_places(kakao_search_query, kakao_cat if not is_theme_slot else '', [])
                 for fp in new_fps:
                     _fixed_place_to_place(fp, search_region)
                     

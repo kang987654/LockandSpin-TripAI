@@ -140,6 +140,15 @@ def _temp_event_to_place(te, region: str):
     return place
 
 
+def haversine_local(lat1, lon1, lat2, lon2):
+    import math
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
 def get_slot_places_for_course(destination: str, travel_date: str, preferences: str, user, duration_days: int = 1, departure_time: str = "09:00", transportation: str = "public") -> tuple:
     """
     Lock&Spin 코스 생성 시 AI 기반으로 슬롯에 채울 Place 객체들을 반환합니다.
@@ -169,106 +178,65 @@ def get_slot_places_for_course(destination: str, travel_date: str, preferences: 
     )
 
     slot_pool = {'spot': [], 'restaurant': [], 'cafe': [], 'activity': [], 'accommodation': []}
+    
+    # 1단계: 정확한 지역 검색어 추출 (사용자 입력 선호도에서 구/동/역 등의 키워드를 우선 추출)
+    import re
+    pref_text = preferences or ""
+    m = re.search(r'([가-힣]+(?:구|동|역|면|읍|리))|강남|홍대|성수|이태원|건대|신촌|잠실|해운대|서면|종로|명동|여의도|신림|연남|망원|한남|압구정|청담', pref_text)
+    exact_dest = m.group(0) if m else (destination.split()[-1] if destination != '랜덤' else None)
+    
+    # 2단계: 광역 지역 검색어 (첫 2글자. 예: "서울특별시" -> "서울")
+    broad_dest = destination[:2] if destination != '랜덤' else None
 
-    # 2. 고정 장소 처리 (트랙 A - 카카오 API)
-    for fp_info in parsed.get('fixed_places', []):
-        category = fp_info.get('category', '')
-        tags = fp_info.get('tags', [])
-        jw_category = KAKAO_TO_JW_CATEGORY.get(category, 'spot')
-
-        if jw_category in veto_codes:
-            continue
-
-        # DB 먼저 조회
-        db_places = FixedPlace.objects.filter(region=destination, category=category)[:5]
-        api_needed = db_places.count() < 3
-
-        places_from_db = [_fixed_place_to_place(fp, destination) for fp in db_places]
-
-        if api_needed:
-            # 카카오 API 호출
-            new_fps = fetch_and_save_kakao_places(destination, category, tags)
-            places_from_api = [_fixed_place_to_place(fp, destination) for fp in new_fps]
-            merged = list({p.id: p for p in places_from_db + places_from_api}.values())
-        else:
-            merged = places_from_db
-
-        for p in merged:
-            if p not in slot_pool[jw_category]:
-                slot_pool[jw_category].append(p)
-
-    # 3. 일시적 행사 처리 (트랙 B - 네이버 API) — 부족한 카테고리 보완용
-    from datetime import datetime
-    try:
-        target_date = datetime.strptime(travel_date, "%Y-%m-%d").date()
-    except Exception:
-        target_date = datetime.now().date()
-
-    from recommendations.models import TemporaryEvent
-    for te_info in parsed.get('temporary_events', []):
-        category = te_info.get('category', '')
-        jw_category = 'activity' if '팝업' in category or '체험' in category else 'spot'
-        
-        if jw_category in veto_codes:
-            continue
-
-        db_events = TemporaryEvent.objects.filter(
-            region=destination,
-            category=category,
-            start_date__lte=target_date,
-            end_date__gte=target_date
-        )[:5]
-        
-        events_from_db = [_temp_event_to_place(te, destination) for te in db_events]
-        
-        if len(events_from_db) < 2:
-            new_tes = fetch_and_save_naver_events(destination, category)
-            # 날짜 필터링
-            valid_tes = [te for te in new_tes if te.start_date <= target_date <= te.end_date]
-            events_from_api = [_temp_event_to_place(te, destination) for te in valid_tes]
-            merged_events = list({p.id: p for p in events_from_db + events_from_api}.values())
-        else:
-            merged_events = events_from_db
-            
-        for p in merged_events:
-            if p not in slot_pool[jw_category]:
-                slot_pool[jw_category].append(p)
-
-    # 4. 풀이 비어있는 카테고리는 내부 DB에서 보완 (지역 필터 필수)
-    dest_prefix = destination[:2] if destination != '랜덤' else None
+    exact_coords = None
+    if exact_dest:
+        exact_coords = _get_coordinates_for_address(exact_dest, broad_dest)
 
     for jw_cat in ['spot', 'restaurant', 'cafe', 'activity', 'accommodation']:
-        if len(slot_pool[jw_cat]) < 2:
-            qs = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes)
-            if dest_prefix:
-                local_qs = qs.filter(address__contains=dest_prefix)
-                if local_qs.exists():
-                    qs = local_qs
-                else:
-                    # 지역에 정 없으면 카카오 API로 긴급 수집
-                    kakao_cat = '관광명소' if jw_cat == 'spot' else '음식점' if jw_cat == 'restaurant' else '카페' if jw_cat == 'cafe' else '액티비티'
-                    new_fps = fetch_and_save_kakao_places(destination, kakao_cat, [])
-                    for fp in new_fps:
-                        _fixed_place_to_place(fp, destination)
-                    
-                    qs = Place.objects.filter(category=jw_cat, address__contains=dest_prefix).exclude(category__in=veto_codes)
+        qs = Place.objects.filter(category=jw_cat).exclude(category__in=veto_codes)
+        
+        internal = []
+        if exact_dest:
+            # 우선 가장 구체적인 지역명으로 검색
+            local_qs = qs.filter(address__contains=exact_dest)
             
-            internal = list(qs.order_by('?')[:5])
-            for p in internal:
-                if p not in slot_pool[jw_cat]:
-                    slot_pool[jw_cat].append(p)
+            # DB에 해당 지역 데이터가 부족한 경우 (5개 미만) 카카오 API로 실시간 수집
+            if local_qs.count() < 5:
+                kakao_cat = {'spot':'관광명소','restaurant':'음식점','cafe':'카페','accommodation':'숙박'}.get(jw_cat, '액티비티')
+                
+                # API로 대상 지역을 구체적으로 명시하여 검색
+                new_fps = fetch_and_save_kakao_places(exact_dest, kakao_cat, [])
+                for fp in new_fps:
+                    _fixed_place_to_place(fp, destination)
+                
+                # DB 수집 후 다시 쿼리
+                local_qs = qs.filter(address__contains=exact_dest)
+            
+            if local_qs.exists():
+                # 정확한 지역에 데이터가 충분하면 랜덤하게 섞어서 제공
+                internal = list(local_qs.order_by('?')[:15])
+            else:
+                # 구체적인 지역으로 수집했는데도 없으면, 광역 단위(예: "서울")로 범위 확장하되, 기준점과 가장 가까운 곳 우선 정렬
+                broad_qs = qs.filter(address__contains=broad_dest)
+                if exact_coords:
+                    all_broad = list(broad_qs)
+                    all_broad.sort(key=lambda p: haversine_local(p.latitude, p.longitude, exact_coords[0], exact_coords[1]))
+                    
+                    # 가장 가까운 20개를 추린 뒤, 항상 똑같은 곳만 나오지 않게 약간 섞어서 15개 추출
+                    closest_20 = all_broad[:20]
+                    random.shuffle(closest_20)
+                    internal = closest_20[:15]
+                else:
+                    internal = list(broad_qs.order_by('?')[:15])
+        else:
+            internal = list(qs.order_by('?')[:15])
+            
+        for p in internal:
+            if p not in slot_pool[jw_cat]:
+                slot_pool[jw_cat].append(p)
 
     return slot_pool, parsed
 
-
-def haversine_local(lat1, lon1, lat2, lon2):
-    import math
-    R = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
 
 def pick_place_for_slot(slot_pool: dict, sequence: int, used_ids: list, target_category: str = None, transportation: str = 'public', last_coords: tuple = None):
     """슬롯 순서 또는 target_category에 맞는 미사용 장소 1개를 선택합니다."""

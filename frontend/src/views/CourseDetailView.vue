@@ -15,6 +15,7 @@ const authStore = useAuthStore()
 const isFriendModalOpen = ref(false)
 
 const kakaoKey = ref('')
+const mapContainer = ref(null)
 const map = ref(null)
 const markers = ref([])
 const activeInfowindows = ref([])
@@ -30,8 +31,31 @@ const draggedSlot = ref(null)
 const onDragStart = (e, slot) => {
   draggedSlot.value = slot
   e.dataTransfer.effectAllowed = 'move'
+  // Slight opacity to dragged item
+  setTimeout(() => {
+    e.target.style.opacity = '0.5'
+  }, 0)
+}
+const onDragEnter = (e) => {
+  const el = e.currentTarget
+  if (el.classList.contains('timeline-item')) {
+    el.classList.add('drag-over')
+  }
+}
+const onDragLeave = (e) => {
+  const el = e.currentTarget
+  if (el.classList.contains('timeline-item')) {
+    el.classList.remove('drag-over')
+  }
+}
+const onDragEnd = (e) => {
+  e.target.style.opacity = '1'
 }
 const onDrop = async (e, targetSlot) => {
+  const el = e.currentTarget
+  if (el.classList.contains('timeline-item')) {
+    el.classList.remove('drag-over')
+  }
   if (draggedSlot.value && draggedSlot.value.day_number === targetSlot.day_number && draggedSlot.value.sequence !== targetSlot.sequence) {
     await courseStore.swapSlotSequence(courseStore.activeCourse.id, targetSlot.day_number, draggedSlot.value.sequence, targetSlot.sequence)
   }
@@ -55,6 +79,14 @@ onMounted(async () => {
 
   if (kakaoKey.value) {
     await loadKakaoMapScript(kakaoKey.value)
+    if (mapContainer.value) {
+      initMap()
+    }
+  }
+})
+
+watch(mapContainer, (newVal) => {
+  if (newVal && window.kakao && window.kakao.maps && !isMapLoaded.value) {
     initMap()
   }
 })
@@ -65,22 +97,45 @@ const loadKakaoMapScript = (appKey) => {
       resolve()
       return
     }
+    // 이전에 로드 실패로 window.kakao 껍데기만 남은 경우 제거
+    if (window.kakao && !window.kakao.maps) {
+      delete window.kakao
+    }
+    
     const script = document.createElement('script')
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?autoload=false&appkey=${appKey}`
+    
     script.onload = () => {
-      window.kakao.maps.load(() => resolve())
+      if (window.kakao && window.kakao.maps && window.kakao.maps.load) {
+        window.kakao.maps.load(() => resolve())
+      } else {
+        console.error("Kakao maps loaded but window.kakao.maps is missing")
+        resolve() // Resolve anyway so it doesn't hang
+      }
     }
+    
+    script.onerror = () => {
+      console.error("Failed to load Kakao map script (check API key or Domain)")
+      resolve() // Resolve anyway to prevent hanging
+    }
+    
     document.head.appendChild(script)
   })
 }
 
 const initMap = () => {
-  const container = document.getElementById('map')
-  if (!container || !window.kakao || !window.kakao.maps) return
-  const options = { center: new window.kakao.maps.LatLng(37.5665, 126.9780), level: 5 }
-  map.value = new window.kakao.maps.Map(container, options)
-  isMapLoaded.value = true
-  updateMapRoute()
+  if (!mapContainer.value || !window.kakao || !window.kakao.maps) {
+    console.error("Map initialization skipped:", { container: !!mapContainer.value, kakao: !!window.kakao })
+    return
+  }
+  try {
+    const options = { center: new window.kakao.maps.LatLng(37.5665, 126.9780), level: 5 }
+    map.value = new window.kakao.maps.Map(mapContainer.value, options)
+    isMapLoaded.value = true
+    updateMapRoute()
+  } catch (err) {
+    console.error("Failed to initialize Kakao map:", err)
+  }
 }
 
 const updateMapRoute = () => {
@@ -435,7 +490,7 @@ const closeAiModal = () => {
         <div v-for="(slots, day) in slotsByDay" :key="day" style="margin-bottom: 2.5rem;">
           <h3 style="color: var(--color-primary); margin-bottom: 1.5rem; font-weight: 800; font-size: 1.4rem;">Day {{ day }}</h3>
           <div class="slot-board">
-            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item" draggable="true" @dragstart="onDragStart($event, slot)" @dragover="onDragOver" @drop="onDrop($event, slot)" style="cursor: grab;">
+            <div v-for="slot in slots" :key="slot.sequence" class="timeline-item" draggable="true" @dragstart="onDragStart($event, slot)" @dragenter="onDragEnter" @dragleave="onDragLeave" @dragend="onDragEnd" @dragover="onDragOver" @drop="onDrop($event, slot)" style="cursor: grab; transition: transform 0.2s, background-color 0.2s;">
               <!-- Timeline Dot -->
               <div class="timeline-dot">
                 <div class="timeline-dot-inner"></div>
@@ -495,7 +550,7 @@ const closeAiModal = () => {
 
       <!-- Right side: Map & Panels -->
       <div class="map-section">
-        <div id="map" class="map-container"></div>
+        <div ref="mapContainer" id="map" class="map-container"></div>
 
         <!-- Floating Panel: Top Right (AI Comment Button) -->
         <div class="floating-panel-top-right" v-if="!isAiModalOpen">
@@ -892,5 +947,10 @@ const closeAiModal = () => {
 .btn-delete-x:hover {
   background: #fee2e2;
   transform: scale(1.1);
+}
+.drag-over {
+  border-top: 3px solid var(--color-primary);
+  opacity: 0.8;
+  transform: translateY(2px);
 }
 </style>
