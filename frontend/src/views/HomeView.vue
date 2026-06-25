@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth'
 import { useCourseStore } from '../stores/course'
 import { MapPin, Calendar, Sparkles, Clock, Car } from 'lucide-vue-next'
 import KoreaMapSelector from '../components/KoreaMapSelector.vue'
+import FoodRecommendationWidget from '../components/FoodRecommendationWidget.vue'
 import axios from 'axios'
 
 const authStore = useAuthStore()
@@ -114,7 +115,9 @@ const handleGenerate = async () => {
         </p>
       </div>
 
-      <div class="glass-card creation-card">
+      <div class="home-layout">
+        <!-- Main Content -->
+        <div class="glass-card creation-card">
         <h2 class="card-title">
           <Sparkles :size="20" style="color: var(--color-primary); margin-right: 0.5rem;" />
           새 코스 생성하기
@@ -207,6 +210,12 @@ const handleGenerate = async () => {
             {{ isCreating ? '코스 생성 중...' : '코스 짜기 시작' }}
           </button>
         </form>
+        </div>
+
+        <!-- Sidebar (Food Widget) -->
+        <div class="sidebar-container">
+          <FoodRecommendationWidget />
+        </div>
       </div>
     </div>
   </div>
@@ -244,13 +253,17 @@ const handleGenerate = async () => {
   position: relative;
   z-index: 10;
   width: 100%;
-  max-width: 900px;
+  max-width: 1200px; /* Increased from 900px */
   padding: 0 1.5rem;
 }
 
-.text-center {
-  text-align: center;
+.home-layout {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
 }
+
+
 
 .hero-title {
   font-size: 2.8rem;
@@ -275,11 +288,22 @@ const handleGenerate = async () => {
 }
 
 .creation-card {
+  flex: 2; /* takes more space */
   background: rgba(255, 255, 255, 0.95);
   border-radius: 20px;
   padding: 2.5rem;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255,255,255,0.5);
+}
+
+.sidebar-container {
+  flex: 1;
+  min-width: 300px;
+  max-width: 350px;
+}
+
+.text-center {
+  text-align: center;
 }
 
 .card-title {
@@ -313,6 +337,17 @@ const handleGenerate = async () => {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+@media (max-width: 992px) {
+  .home-layout {
+    flex-direction: column;
+  }
+  
+  .sidebar-container {
+    max-width: 100%;
+    width: 100%;
+  }
 }
 
 @media (max-width: 768px) {

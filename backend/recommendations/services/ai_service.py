@@ -85,6 +85,27 @@ COURSE_REVIEW_SYSTEM_PROMPT = """
 """
 
 
+# 3. 밥 메뉴 추천 프롬프트
+FOOD_RECOMMENDATION_PROMPT = """
+당신은 최고의 미식가이자 식당 추천 AI입니다.
+사용자가 입력한 지역과 '오늘 먹고 싶은 음식(기분/상황)'을 바탕으로,
+1. 어떤 종류의 음식(한식, 양식, 일식, 중식, 분식, 카페/디저트 등)이 어울릴지 카테고리를 추론하세요.
+2. 카카오맵에서 검색하기 가장 좋은 '검색 키워드(지역명 + 구체적인 메뉴명)'를 생성하세요. (예: "강남역 얼큰한 국물" 보다는 "강남역 짬뽕" 또는 "강남역 국밥"이 좋습니다)
+3. 왜 이 메뉴를 추천하는지 사용자에게 친근하고 재치 있게 전달할 멘트(50자 내외)를 작성하세요.
+
+[사용자 입력]
+지역: "{region}"
+원하는 음식/기분: "{preference}"
+
+응답은 반드시 아래 형식의 유효한 JSON 문자열이어야 하며, 마크다운(```json 등)을 포함하지 마세요.
+{{
+    "category": "추론된 카테고리 (예: 중식)",
+    "search_keyword": "지역명 + 메뉴 (예: 강남역 마라탕)",
+    "recommend_message": "비 오는 날엔 역시 얼큰한 마라탕이죠! 스트레스가 확 풀릴 거예요."
+}}
+"""
+
+
 def generate_course_comment(destination: str, preferences: str, places: list) -> str:
     """
     생성된 코스 목록을 바탕으로 AI가 한줄평 코멘트를 생성합니다.
@@ -261,3 +282,51 @@ def _fallback_parse(region: str, travel_date: str, query: str) -> dict:
         ]
 
     return fallback_data
+
+def recommend_food_menu(region: str, preference: str) -> dict:
+    """사용자 기분/원하는 메뉴 기반으로 식당 1곳 추천"""
+    prompt = FOOD_RECOMMENDATION_PROMPT.format(region=region, preference=preference)
+    gms_key = os.getenv("GMS_API_KEY")
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.7}
+    }
+    
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        res.raise_for_status()
+        raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if raw_text.startswith("```json"): raw_text = raw_text[7:]
+        if raw_text.endswith("```"): raw_text = raw_text[:-3]
+        
+        data = json.loads(raw_text.strip())
+        
+        # 카카오 API로 검색
+        from recommendations.services.kakao_service import fetch_and_save_kakao_places
+        from recommendations.services.recommendation_service import _fixed_place_to_place
+        from places.models import Place
+        
+        new_fps = fetch_and_save_kakao_places(data['search_keyword'], "", [])
+        
+        place_data = None
+        if new_fps:
+            p = _fixed_place_to_place(new_fps[0], region)
+            if p:
+                place_data = {
+                    "id": p.id,
+                    "name": p.name,
+                    "address": p.address,
+                    "image_url": p.image_url,
+                    "category": p.get_category_display(),
+                    "place_url": p.place_url
+                }
+                
+        return {
+            "ai_analysis": data,
+            "place": place_data
+        }
+    except Exception as e:
+        print(f"Food recommendation error: {e}")
+        return {"error": str(e)}

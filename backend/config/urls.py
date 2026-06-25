@@ -21,6 +21,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from users.views import RegisterView, UserPreferenceView, ConfigView, UserSearchView, FriendshipView, FriendRequestView, FriendAcceptView, FriendRejectView
 from courses.views import TravelCourseViewSet, CourseMemberViewSet
+from recommendations.views import FoodRecommendationView
 
 router = DefaultRouter()
 router.register(r'courses', TravelCourseViewSet, basename='course')
@@ -48,6 +49,9 @@ urlpatterns = [
     
     # Courses (Router)
     path('api/', include(router.urls)),
+    
+    # Recommendations
+    path('api/recommendations/food/', FoodRecommendationView.as_view(), name='food_recommend'),
     
     # Community
     path('api/community/', include('community.urls')),

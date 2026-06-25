@@ -49,6 +49,24 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
         except FixedPlace.DoesNotExist:
             pass
 
+        place_url = doc.get("place_url", "")
+        img_url = ""
+        if place_url:
+            from bs4 import BeautifulSoup
+            try:
+                res = requests.get(place_url, timeout=2)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    og_img = soup.find('meta', property='og:image')
+                    if og_img and og_img.get('content'):
+                        img_content = og_img.get('content')
+                        if img_content.startswith('//'):
+                            img_url = 'https:' + img_content
+                        else:
+                            img_url = img_content
+            except Exception:
+                pass
+
         try:
             place = FixedPlace.objects.create(
                 id=place_id,
@@ -56,10 +74,10 @@ def fetch_and_save_kakao_places(region: str, category: str, tags: list) -> list:
                 address=doc["address_name"],
                 region=region,
                 category=category,
-                latitude=float(doc.get("y", 0)),    # 위도
-                longitude=float(doc.get("x", 0)),   # 경도
-                image_url=None,
-                place_url=doc["place_url"]
+                latitude=float(doc.get("y", 0)),
+                longitude=float(doc.get("x", 0)),
+                image_url=img_url,
+                place_url=place_url
             )
             _update_tags(place, tags)
             saved_places.append(place)

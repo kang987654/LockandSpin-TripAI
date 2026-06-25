@@ -442,8 +442,11 @@ const handleRespin = () => {
                 </div>
 
                 <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                  <div v-if="slot.place.image_url" style="width: 80px; height: 80px; border-radius: 8px; flex-shrink: 0; overflow: hidden; background: #f3f4f6;">
+                    <img :src="slot.place.image_url" alt="place image" style="width: 100%; height: 100%; object-fit: cover;" />
+                  </div>
                   <!-- Image placeholder -->
-                  <div style="width: 80px; height: 80px; border-radius: 8px; background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%); flex-shrink: 0; display: flex; align-items: center; justify-content: center;">
+                  <div v-else style="width: 80px; height: 80px; border-radius: 8px; background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%); flex-shrink: 0; display: flex; align-items: center; justify-content: center;">
                     <span style="font-size: 1.5rem;">{{ slot.place.category === 'restaurant' ? '🍽️' : slot.place.category === 'cafe' ? '☕' : slot.place.category === 'accommodation' ? '🛏️' : '🏞️' }}</span>
                   </div>
                   <div style="flex: 1;">
