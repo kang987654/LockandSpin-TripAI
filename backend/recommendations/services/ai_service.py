@@ -63,7 +63,8 @@ USER_REQUEST_PARSE_PROMPT = """
 5. 여행자가 변덕을 부릴 수 있도록, 일정 중 최소 1~2곳에는 대체 가능한 '옵션(Alternative)'을 짧게 제안하세요.
 6. [매우 중요] 각 일차별 `schedules` 배열의 길이는 반드시 'Core Logic 3'에 제시된 화살표(->) 단계 수에 맞춰 최소화하세요. (예: 1박 2일의 1일 차는 3~4개의 장소만 추천).
 7. [매우 중요] "도착", "주변 탐색", "귀가", "여유로운 브런치(장소 미정)" 처럼 구체적인 장소가 없는 단순 상태나 이동은 `schedules` 목록에 포함하지 마세요. 오직 실제 방문할 식당, 카페, 명소, 숙소만 배열에 넣으세요.
-8. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
+8. [매우 중요] `daily_plans` 배열 안에는 반드시 1일 차부터 {duration_days}일 차까지의 일정이 모두 포함되어야 합니다. 아래 예시는 1일 차만 보여주지만, 실제 응답에는 여행 기간 전체의 일정이 빠짐없이 들어가야 합니다.
+9. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
 
 # JSON Output Format (Strict)
 ```json
@@ -185,7 +186,7 @@ def parse_user_request(region: str, travel_date: str, query: str, duration_days:
     사용자의 요청을 Gemini API를 통해 분석하여 구조화된 데이터로 반환합니다.
     AICache를 활용하여 동일 쿼리 반복 호출을 방지합니다.
     """
-    cache_key = f"{region}_{travel_date}_{query}".strip()
+    cache_key = f"{region}_{travel_date}_{duration_days}days_{query}".strip()
     try:
         cached = AICache.objects.get(query_key=cache_key)
         return cached.parsed_result
