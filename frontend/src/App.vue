@@ -1,11 +1,14 @@
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
-import { Dices, User, LogOut } from 'lucide-vue-next'
+import { Dices, User, LogOut, Users } from 'lucide-vue-next'
+import FriendManagerModal from './components/FriendManagerModal.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
+
+const isFriendModalOpen = ref(false)
 
 const handleLogout = () => {
   authStore.logout()
@@ -28,6 +31,11 @@ const handleLogout = () => {
         <router-link to="/" class="nav-link" exact-active-class="active">홈</router-link>
         <router-link to="/courses" class="nav-link" active-class="active">나의 코스</router-link>
         <router-link to="/community" class="nav-link" active-class="active">커뮤니티</router-link>
+
+        <button v-if="authStore.isLoggedIn" @click="isFriendModalOpen = true" class="nav-link" style="background: none; border: none; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; font-family: inherit; font-size: 0.95rem;">
+          <Users :size="16" />
+          <span>친구 관리</span>
+        </button>
       </nav>
 
       <div class="divider"></div>
@@ -56,6 +64,8 @@ const handleLogout = () => {
   <div class="main-content">
     <router-view></router-view>
   </div>
+
+  <FriendManagerModal :isOpen="isFriendModalOpen" @close="isFriendModalOpen = false" :showInvite="false" />
 </template>
 
 <style>

@@ -92,6 +92,7 @@ export const useAuthStore = defineStore('auth', () => {
       preferredPace.value = res.data.preferred_pace
       vetoCategories.value = res.data.veto_categories
       currentUser.value = {
+        id: res.data.id,
         username: res.data.username,
         email: res.data.email
       }

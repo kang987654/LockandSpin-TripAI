@@ -354,7 +354,7 @@ const getCompatibleSlots = (category) => {
 
         <div style="display: flex; gap: 1rem;">
           <button v-if="isCourseOwner || members.some(m => m.username === authStore.currentUser?.username && m.role === 'editor')" class="btn-primary" style="background: #007bff; border-color: #007bff; padding: 0.6rem 1.2rem; display: flex; align-items: center; gap: 0.4rem; border-radius: 20px; font-size: 0.95rem;" @click="isFriendModalOpen = true">
-            <span>👤+</span> 공유
+            <span>👤+</span> 일행 초대
           </button>
           
           <button class="btn-primary" :disabled="courseStore.isSpinning || courseStore.activeCourse.status === 'saved'" @click="courseStore.triggerRespin" style="padding: 0.9rem 2.2rem; font-size: 1.05rem;">

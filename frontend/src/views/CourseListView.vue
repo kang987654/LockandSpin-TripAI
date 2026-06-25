@@ -31,8 +31,19 @@ const deleteCourse = async (courseId, event) => {
   }
 }
 
+const activeTab = ref('my') // 'my' or 'invited'
+
 const filteredCourses = computed(() => {
   let list = courseStore.coursesList
+
+  // 1. 탭 필터링
+  if (activeTab.value === 'my') {
+    list = list.filter(c => c.user === authStore.currentUser?.id || c.user?.id === authStore.currentUser?.id || c.user === null)
+  } else {
+    list = list.filter(c => c.user !== authStore.currentUser?.id && c.user?.id !== authStore.currentUser?.id && c.user !== null)
+  }
+
+  // 2. 검색/기타 필터링
   if (filterDestination.value) {
     list = list.filter(c => c.destination.includes(filterDestination.value))
   }
@@ -81,6 +92,12 @@ const getRandomImage = (id) => {
       <button class="btn-primary" @click="router.push('/')">
         <Plus :size="18" /> 새 코스 생성
       </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs-area">
+      <button class="tab-btn" :class="{ active: activeTab === 'my' }" @click="activeTab = 'my'">내가 만든 코스</button>
+      <button class="tab-btn" :class="{ active: activeTab === 'invited' }" @click="activeTab = 'invited'">초대받은 코스</button>
     </div>
 
     <!-- Filters -->
@@ -156,9 +173,47 @@ const getRandomImage = (id) => {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 2.5rem;
+  margin-bottom: 1.5rem;
   flex-wrap: wrap;
   gap: 1rem;
+}
+
+.tabs-area {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 2px solid var(--border-muted);
+  margin-bottom: 2rem;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0.8rem 1.5rem;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.tab-btn:hover {
+  color: var(--text-main);
+}
+
+.tab-btn.active {
+  color: var(--color-primary);
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: var(--color-primary);
+  border-radius: 3px 3px 0 0;
 }
 
 .page-title {
