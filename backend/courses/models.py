@@ -21,6 +21,7 @@ class TravelCourse(models.Model):
 
 class CourseMember(models.Model):
     ROLE_CHOICES = [
+        ('owner', 'Owner'),
         ('editor', 'Editor'),
         ('viewer', 'Viewer'),
     ]

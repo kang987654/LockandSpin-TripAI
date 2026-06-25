@@ -78,7 +78,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             if summary:
                 new_title = summary.get('title')
                 themes = summary.get('theme_matched', [])
-                if new_title:
+                # 사용자가 명시적으로 제목을 입력했으면 덮어쓰지 않음
+                if new_title and not course.title:
                     course.title = new_title
                 if themes:
                     course.preferences = ", ".join(themes)
@@ -178,7 +179,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
                                 if hasattr(self.request.user, 'preference'):
                                     import json
                                     try:
-                                        user_themes = json.loads(self.request.user.preference.preferred_themes)
+                                        pref_themes = self.request.user.preference.preferred_themes
+                                        user_themes = [t.strip() for t in pref_themes.split(',') if t.strip()] if pref_themes else []
                                     except:
                                         pass
                                         
@@ -556,7 +558,8 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             if request.user and request.user.is_authenticated and hasattr(request.user, 'preference'):
                 import json
                 try:
-                    user_themes = json.loads(request.user.preference.preferred_themes)
+                    pref_themes = request.user.preference.preferred_themes
+                    user_themes = [t.strip() for t in pref_themes.split(',') if t.strip()] if pref_themes else []
                 except Exception:
                     pass
                     
@@ -703,7 +706,25 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
             themes = [t.strip() for t in clean_theme.split(',')]
             clean_theme = themes[0] if themes else ""
 
-        # 5. 미잠금 슬롯 대상 재추천
+        # 5. AI 프롬프트 태그 복원 (반복문 외부에서 단 1회 수행하여 캐시/호출 최적화)
+        ai_tags = []
+        if course.preferences:
+            from recommendations.services.ai_service import parse_user_request
+            try:
+                parsed = parse_user_request(
+                    region=course.destination,
+                    travel_date=str(course.start_date),
+                    query=course.preferences,
+                    duration_days=course.duration_days,
+                    departure_time=course.departure_time.strftime('%H:%M') if course.departure_time else "09:00",
+                    transportation=course.transportation
+                )
+                if parsed and 'itinerary_summary' in parsed:
+                    ai_tags.extend(parsed['itinerary_summary'].get('theme_matched', []))
+            except Exception:
+                pass
+
+        # 6. 미잠금 슬롯 대상 재추천
         if target_day:
             unlocked_details = CourseDetail.objects.filter(course=course, is_locked=False, day_number=target_day)
         else:
@@ -806,27 +827,13 @@ class TravelCourseViewSet(viewsets.ModelViewSet):
 
             # AI 기반 테마 매칭 및 거리 가중치 종합 계산
             from recommendations.services.recommendation_service import calculate_place_score
-            pref, created = UserPreference.objects.get_or_create(user=request.user)
-            user_themes = [t.strip() for t in pref.preferred_themes.split(',') if t.strip()] if pref.preferred_themes else []
+            if request.user and request.user.is_authenticated:
+                pref, created = UserPreference.objects.get_or_create(user=request.user)
+                user_themes = [t.strip() for t in pref.preferred_themes.split(',') if t.strip()] if pref.preferred_themes else []
+            else:
+                user_themes = []
 
-            # AI 프롬프트 태그 복원
-            ai_tags = []
-            if course.preferences:
-                from recommendations.services.ai_service import parse_user_request
-                try:
-                    parsed = parse_user_request(
-                        region=course.destination,
-                        travel_date=str(course.start_date),
-                        query=course.preferences,
-                        duration_days=course.duration_days,
-                        departure_time=course.departure_time.strftime('%H:%M') if course.departure_time else "09:00",
-                        transportation=course.transportation
-                    )
-                    if parsed:
-                        for fp in parsed.get('fixed_places', []):
-                            ai_tags.extend(fp.get('tags', []))
-                except Exception:
-                    pass
+
 
             if candidates.exists():
                 best_place = None

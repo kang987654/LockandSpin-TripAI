@@ -172,7 +172,6 @@ const handleGenerate = async () => {
                   <option value="2">1박 2일</option>
                   <option value="3">2박 3일</option>
                   <option value="4">3박 4일</option>
-                  <option value="5">4박 5일 이상</option>
                 </select>
               </div>
 

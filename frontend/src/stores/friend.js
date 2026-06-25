@@ -4,6 +4,8 @@ import axios from 'axios'
 import { useAuthStore } from './auth'
 
 export const useFriendStore = defineStore('friend', () => {
+  const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+
   const friends = ref([])
   const pendingReceived = ref([])
   const pendingSent = ref([])
@@ -12,7 +14,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   const fetchFriends = async () => {
     try {
-      const res = await axios.get('http://127.0.0.1:8000/api/users/friends/', {
+      const res = await axios.get(`${API_BASE}/api/users/friends/`, {
         headers: { Authorization: `Bearer ${authStore.token}` }
       })
       friends.value = res.data.friends
@@ -25,7 +27,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   const searchUsers = async (query) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/api/users/search/?q=${query}`, {
+      const res = await axios.get(`${API_BASE}/api/users/search/?q=${query}`, {
         headers: { Authorization: `Bearer ${authStore.token}` }
       })
       searchResults.value = res.data
@@ -36,7 +38,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   const sendRequest = async (userId) => {
     try {
-      await axios.post('http://127.0.0.1:8000/api/users/friends/request/', { user_id: userId }, {
+      await axios.post(`${API_BASE}/api/users/friends/request/`, { user_id: userId }, {
         headers: { Authorization: `Bearer ${authStore.token}` }
       })
       await fetchFriends()
@@ -48,7 +50,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   const acceptRequest = async (friendshipId) => {
     try {
-      await axios.post('http://127.0.0.1:8000/api/users/friends/accept/', { friendship_id: friendshipId }, {
+      await axios.post(`${API_BASE}/api/users/friends/accept/`, { friendship_id: friendshipId }, {
         headers: { Authorization: `Bearer ${authStore.token}` }
       })
       await fetchFriends()
@@ -59,7 +61,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   const rejectRequest = async (friendshipId) => {
     try {
-      await axios.post('http://127.0.0.1:8000/api/users/friends/reject/', { friendship_id: friendshipId }, {
+      await axios.post(`${API_BASE}/api/users/friends/reject/`, { friendship_id: friendshipId }, {
         headers: { Authorization: `Bearer ${authStore.token}` }
       })
       await fetchFriends()

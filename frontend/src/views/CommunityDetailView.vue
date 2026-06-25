@@ -24,6 +24,18 @@ onMounted(() => {
   fetchArticle()
 })
 
+const deleteArticle = async () => {
+  if (!confirm('정말로 이 게시글을 삭제하시겠습니까?')) return
+  try {
+    await axios.delete(`${authStore.API_BASE}/api/community/articles/${route.params.id}/`, authStore.getHeaders())
+    alert('게시글이 삭제되었습니다.')
+    router.push('/community')
+  } catch (e) {
+    alert('게시글 삭제 중 오류가 발생했습니다.')
+    console.error(e)
+  }
+}
+
 const submitComment = async () => {
   if (!newComment.value.trim()) return
   try {
@@ -48,7 +60,10 @@ const submitComment = async () => {
             작성자: {{ article.user?.username }} | 작성일: {{ new Date(article.created_at).toLocaleString() }}
           </p>
         </div>
-        <button class="btn-secondary" @click="router.push('/community')">목록으로</button>
+        <div style="display: flex; gap: 0.5rem;">
+          <button v-if="authStore.currentUser?.username === article.user?.username" class="btn-danger" @click="deleteArticle" style="background: #ef4444; color: white; padding: 0.5rem 1rem; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; transition: all 0.2s;">삭제</button>
+          <button class="btn-secondary" @click="router.push('/community')">목록으로</button>
+        </div>
       </div>
 
       <div v-if="article.course" style="margin-bottom: 2rem; padding: 1rem; background: hsla(265, 90%, 65%, 0.1); border-radius: 8px; border: 1px solid var(--color-primary); cursor: pointer;" @click="router.push(`/courses/${article.course}`)">

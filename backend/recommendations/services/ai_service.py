@@ -63,7 +63,7 @@ USER_REQUEST_PARSE_PROMPT = """
 5. 여행자가 변덕을 부릴 수 있도록, 일정 중 최소 1~2곳에는 대체 가능한 '옵션(Alternative)'을 짧게 제안하세요.
 6. [매우 중요] 각 일차별 `schedules` 배열의 길이는 반드시 'Core Logic 3'에 제시된 화살표(->) 단계 수에 맞춰 최소화하세요. (예: 1박 2일의 1일 차는 3~4개의 장소만 추천).
 7. [매우 중요] "도착", "주변 탐색", "귀가", "여유로운 브런치(장소 미정)" 처럼 구체적인 장소가 없는 단순 상태나 이동은 `schedules` 목록에 포함하지 마세요. 오직 실제 방문할 식당, 카페, 명소, 숙소만 배열에 넣으세요.
-8. [매우 중요] `daily_plans` 배열 안에는 반드시 1일 차부터 {duration_days}일 차까지의 일정이 모두 포함되어야 합니다. 아래 예시는 1일 차만 보여주지만, 실제 응답에는 여행 기간 전체의 일정이 빠짐없이 들어가야 합니다.
+8. [매우 중요] `daily_plans` 배열 안에는 반드시 1일 차부터 {duration_days}일 차까지의 일정이 모두 포함되어야 합니다. 아래 JSON 예시는 2일 차까지만 보여주지만, 만약 여행 기간이 3일 이상이라면 동일한 구조로 {duration_days}일 차까지 빠짐없이 배열 요소를 동적으로 추가하여 응답해야 합니다.
 9. 클라이언트 애플리케이션에서 파싱하여 모던한 UI로 렌더링할 수 있도록 반드시 아래의 JSON 포맷을 엄격하게 지켜서 출력하세요. 마크다운 기호(```json)를 포함하여 응답하세요.
 
 # JSON Output Format (Strict)
@@ -87,6 +87,21 @@ USER_REQUEST_PARSE_PROMPT = """
           "location_name": "유저가 콕 집었을 때만 기재 (그 외엔 빈 문자열 '')",
           "reason": "이 장소를 추천하는 1줄 이유",
           "alternative_option": "기분에 따라 변경 가능한 대체 옵션 1개 (없으면 null)"
+        }}
+      ]
+    }},
+    {{
+      "day": 2,
+      "date": "다음 날짜",
+      "route_summary": "2일 차 동선 요약",
+      "schedules": [
+        {{
+          "time_slot": "오전",
+          "activity_type": "Meal",
+          "tags": ["브런치", "여유"],
+          "location_name": "",
+          "reason": "여유로운 아침 식사",
+          "alternative_option": null
         }}
       ]
     }}
@@ -164,7 +179,7 @@ def generate_course_comment(destination: str, preferences: str, places: list) ->
         if hasattr(settings, 'GMS_API_KEY'):
             gms_key = settings.GMS_API_KEY
 
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -172,13 +187,13 @@ def generate_course_comment(destination: str, preferences: str, places: list) ->
     }
 
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
         res.raise_for_status()
         raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         return raw_text
     except Exception as e:
         print(f"Gemini API Error (Comment): {e}")
-        return "멋진 장소들로 알차게 구성된 여행 코스입니다!"
+        return "현재 AI 서버에 접속자가 많아 일시적으로 과부하 상태입니다. 잠시 후 '조언 다시 받기'를 눌러 다시 확인해주세요!"
 
 
 def parse_user_request(region: str, travel_date: str, query: str, duration_days: int = 1, departure_time: str = "09:00", transportation: str = "public") -> dict:
@@ -203,7 +218,7 @@ def parse_user_request(region: str, travel_date: str, query: str, duration_days:
     )
 
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
     headers = {
         "Content-Type": "application/json",
@@ -218,7 +233,7 @@ def parse_user_request(region: str, travel_date: str, query: str, duration_days:
     import time
     for attempt in range(3):
         try:
-            res = requests.post(url, headers=headers, json=payload, timeout=15)
+            res = requests.post(url, headers=headers, json=payload, timeout=45)
             res.raise_for_status()
             res_data = res.json()
             raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -263,7 +278,7 @@ def extract_realtime_keywords(query: str) -> dict:
 """
     
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -330,7 +345,7 @@ def recommend_food_menu(region: str, preference: str) -> dict:
     """사용자 기분/원하는 메뉴 기반으로 식당 1곳 추천"""
     prompt = FOOD_RECOMMENDATION_PROMPT.format(region=region, preference=preference)
     gms_key = os.getenv("GMS_API_KEY")
-    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    url = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": gms_key}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],

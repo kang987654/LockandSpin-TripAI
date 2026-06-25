@@ -26,3 +26,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .eslintcache
+
+# Local DB & Scripts
+db.sqlite3
+generate_dummy_data*.py
+

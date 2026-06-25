@@ -31,7 +31,7 @@ class TravelCourseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TravelCourse
-        fields = ['id', 'user', 'title', 'destination', 'start_date', 'duration_days', 'preferences', 'status', 'ai_comment', 'created_at', 'slots', 'members', 'kept_places', 'excluded_places']
+        fields = ['id', 'user', 'title', 'destination', 'start_date', 'duration_days', 'departure_time', 'transportation', 'preferences', 'status', 'ai_comment', 'created_at', 'slots', 'members', 'kept_places', 'excluded_places']
         read_only_fields = ['user', 'created_at']
 
     def get_kept_places(self, obj):
